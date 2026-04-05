@@ -230,9 +230,60 @@ export function registerWebhookRoutes(app: any) {
         return sendError(res, 404, 'WEBHOOK_NOT_FOUND', 'Active webhook not found');
       }
       
-      const events = JSON.parse(webhook.events || '[]');\n      if (!events.includes(event)) {
+      const events = JSON.parse(webhook.events || '[]');
+      if (!events.includes(event)) {
         return sendError(res, 400, 'EVENT_NOT_SUBSCRIBED', 'Webhook not subscribed to this event');
       }
       
       // Test payload
-      const payload = {\n        event,\n        timestamp: new Date().toISOString(),\n        teamId,\n        data: data || { test: true },\n      };\n      \n      try {\n        // Make actual HTTP request to webhook URL\n        const fetch = require('node-fetch');\n        const response = await fetch(webhook.url, {\n          method: 'POST',\n          headers: {\n            'Content-Type': 'application/json',\n            'User-Agent': 'KitchenPlugin-Marketing/1.0',\n            ...(webhook.secret && {\n              'X-Webhook-Signature': require('crypto')\n                .createHmac('sha256', webhook.secret)\n                .update(JSON.stringify(payload))\n                .digest('hex')\n            })\n          },\n          body: JSON.stringify(payload),\n          timeout: 10000,\n        });\n        \n        const responseText = await response.text();\n        \n        // Update last triggered time\n        await db\n          .update(schema.webhooks)\n          .set({ lastTriggered: new Date().toISOString() })\n          .where(eq(schema.webhooks.id, webhookId));\n        \n        res.json({\n          success: response.ok,\n          status: response.status,\n          response: responseText,\n          url: webhook.url,\n        });\n      } catch (error: any) {\n        res.json({\n          success: false,\n          error: error.message,\n          url: webhook.url,\n        });\n      }\n    } catch (error: any) {\n      sendError(res, 500, 'WEBHOOK_TEST_ERROR', error.message);\n    }\n  });\n}
+      const payload = {
+        event,
+        timestamp: new Date().toISOString(),
+        teamId,
+        data: data || { test: true },
+      };
+      
+      try {
+        // Make HTTP request to webhook URL
+        const response = await fetch(webhook.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'KitchenPlugin-Marketing/1.0',
+            ...(webhook.secret && {
+              'X-Webhook-Signature': require('crypto')
+                .createHmac('sha256', webhook.secret)
+                .update(JSON.stringify(payload))
+                .digest('hex')
+            })
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10000),
+        });
+        
+        const responseText = await response.text();
+        
+        // Update last triggered time
+        await db
+          .update(schema.webhooks)
+          .set({ lastTriggered: new Date().toISOString() })
+          .where(eq(schema.webhooks.id, webhookId));
+        
+        res.json({
+          success: response.ok,
+          status: response.status,
+          response: responseText,
+          url: webhook.url,
+        });
+      } catch (error: any) {
+        res.json({
+          success: false,
+          error: error.message,
+          url: webhook.url,
+        });
+      }
+    } catch (error: any) {
+      sendError(res, 500, 'WEBHOOK_TEST_ERROR', error.message);
+    }
+  });
+}

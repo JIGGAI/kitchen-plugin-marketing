@@ -3,41 +3,60 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-console.log('Building kitchen-plugin-marketing...');
+const root = path.join(__dirname, '..');
+const distDir = path.join(root, 'dist');
 
-// Create dist directory
-const distDir = path.join(__dirname, '..', 'dist');
-if (!fs.existsSync(distDir)) {
-  fs.mkdirSync(distDir, { recursive: true });
+console.log('Building kitchen-plugin-marketing...\n');
+
+// Clean dist
+if (fs.existsSync(distDir)) {
+  fs.rmSync(distDir, { recursive: true });
 }
+fs.mkdirSync(distDir, { recursive: true });
+fs.mkdirSync(path.join(distDir, 'api'), { recursive: true });
+fs.mkdirSync(path.join(distDir, 'tabs'), { recursive: true });
 
-// Create dist/api and dist/tabs directories
-const distApiDir = path.join(distDir, 'api');
-const distTabsDir = path.join(distDir, 'tabs');
-fs.mkdirSync(distApiDir, { recursive: true });
-fs.mkdirSync(distTabsDir, { recursive: true });
+const externals = '--external:better-sqlite3 --external:drizzle-orm --external:drizzle-orm/* --external:express --external:multer --external:crypto --external:path --external:fs --external:fs/promises --external:node:crypto';
 
-// Copy source files to dist (simple copy for now)
 try {
-  execSync(`cp -r src/* ${distDir}/`, { stdio: 'inherit' });
-  console.log('✓ TypeScript files copied to dist/');
+  // 1. Build main entry point
+  execSync(
+    `esbuild src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/index.js ${externals}`,
+    { cwd: root, stdio: 'inherit' }
+  );
+  console.log('✓ Built dist/index.js (main entry)');
 
-  // Copy package.json and other required files
-  execSync(`cp package.json ${distDir}/`, { stdio: 'inherit' });
-  execSync(`cp README.md ${distDir}/`, { stdio: 'inherit' });
+  // 2. Build API routes
+  execSync(
+    `esbuild src/api/routes.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/api/routes.js ${externals}`,
+    { cwd: root, stdio: 'inherit' }
+  );
+  console.log('✓ Built dist/api/routes.js (API routes)');
+
+  // 3. Build browser tabs
+  const tabsDir = path.join(root, 'src/tabs');
+  const tabFiles = fs.readdirSync(tabsDir).filter(f => f.endsWith('.tsx'));
   
-  // Copy database files
-  execSync(`cp -r db ${distDir}/`, { stdio: 'inherit' });
-  execSync(`cp drizzle.config.ts ${distDir}/`, { stdio: 'inherit' });
-  
-  console.log('✓ Package files copied');
-  
-  console.log('✓ Build complete! Plugin ready for installation.');
-  console.log('');
-  console.log('Next steps:');
-  console.log('1. Install in ClawKitchen: npm install /path/to/kitchen-plugin-marketing');
-  console.log('2. Or publish to npm: npm publish');
-  
+  for (const tabFile of tabFiles) {
+    const name = tabFile.replace('.tsx', '');
+    execSync(
+      `esbuild src/tabs/${tabFile} --bundle --platform=browser --target=es2020 --format=iife --outfile=dist/tabs/${name}.js --external:react --external:react-dom --jsx=automatic`,
+      { cwd: root, stdio: 'inherit' }
+    );
+    console.log(`✓ Built dist/tabs/${name}.js (browser tab)`);
+  }
+
+  // 4. Copy database migrations
+  const migrationsDir = path.join(root, 'db/migrations');
+  const distMigrationsDir = path.join(distDir, 'db/migrations');
+  fs.mkdirSync(distMigrationsDir, { recursive: true });
+  for (const file of fs.readdirSync(migrationsDir)) {
+    fs.copyFileSync(path.join(migrationsDir, file), path.join(distMigrationsDir, file));
+  }
+  console.log('✓ Copied database migrations');
+
+  console.log('\n✅ Build complete! Plugin ready for installation.\n');
+
 } catch (error) {
   console.error('✗ Build failed:', error.message);
   process.exit(1);
