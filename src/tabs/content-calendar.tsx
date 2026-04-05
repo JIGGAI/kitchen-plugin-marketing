@@ -2,23 +2,53 @@
  * Content Calendar Tab — self-registering browser bundle
  */
 (function () {
-  const React = (window as any).React;
-  if (!React) return;
+  const R = (window as any).React;
+  if (!R) return;
+  const h = R.createElement;
 
-  const s = {
-    page: 'padding:2rem;max-width:1200px;margin:0 auto',
-    h2: 'font-size:1.5rem;font-weight:700;color:var(--ck-text-primary);margin-bottom:1.5rem',
-    card: 'background:var(--ck-bg-glass);border:1px solid var(--ck-border-subtle);border-radius:14px;padding:1.5rem;backdrop-filter:blur(18px) saturate(1.25)',
-    muted: 'color:var(--ck-text-secondary);font-size:0.9rem',
-    mutedSm: 'color:var(--ck-text-tertiary);font-size:0.85rem;margin-top:1rem',
-    banner: 'background:var(--ck-bg-glass);border:1px solid rgba(72,187,120,0.25);border-radius:14px;padding:1.25rem;color:rgba(72,187,120,0.9);font-size:0.9rem;margin-bottom:1.5rem;backdrop-filter:blur(18px)',
-    grid7: 'display:grid;grid-template-columns:repeat(7,1fr);gap:4px',
-    dayHeader: 'text-align:center;padding:0.5rem;font-weight:600;font-size:0.8rem;color:var(--ck-text-tertiary);text-transform:uppercase;letter-spacing:0.05em',
-    dayCell: 'border:1px solid var(--ck-border-subtle);border-radius:8px;padding:0.5rem;min-height:5rem;transition:background 0.15s',
-    dayCellActive: 'border:1px solid var(--ck-border-subtle);border-radius:8px;padding:0.5rem;min-height:5rem;background:rgba(255,255,255,0.03);transition:background 0.15s',
-    dayCellEmpty: 'border:1px solid transparent;border-radius:8px;padding:0.5rem;min-height:5rem;opacity:0.3',
-    dayNum: 'font-size:0.8rem;font-weight:500;color:var(--ck-text-secondary)',
-    todayNum: 'font-size:0.8rem;font-weight:700;color:rgba(99,179,237,1);background:rgba(99,179,237,0.15);width:1.5rem;height:1.5rem;border-radius:50%;display:inline-flex;align-items:center;justify-content:center',
+  const theme = {
+    text: { color: 'var(--ck-text-primary)' },
+    textMuted: { color: 'var(--ck-text-secondary)' },
+    textFaint: { color: 'var(--ck-text-tertiary)' },
+    card: {
+      background: 'var(--ck-bg-glass)',
+      border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '14px',
+      backdropFilter: 'blur(18px) saturate(1.25)',
+    },
+    banner: {
+      background: 'var(--ck-bg-glass)',
+      border: '1px solid rgba(72,187,120,0.25)',
+      borderRadius: '14px',
+      color: 'rgba(72,187,120,0.9)',
+      backdropFilter: 'blur(18px)',
+    },
+    dayHeader: { color: 'var(--ck-text-tertiary)', fontSize: '0.75rem', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+    cell: {
+      border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '8px',
+      minHeight: '5rem',
+      background: 'rgba(255,255,255,0.02)',
+    },
+    cellEmpty: {
+      border: '1px solid transparent',
+      borderRadius: '8px',
+      minHeight: '5rem',
+      opacity: 0.2,
+    },
+    dayNum: { color: 'var(--ck-text-secondary)', fontSize: '0.8rem', fontWeight: 500 },
+    todayBadge: {
+      color: 'rgba(99,179,237,1)',
+      background: 'rgba(99,179,237,0.15)',
+      fontSize: '0.8rem',
+      fontWeight: 700,
+      width: '1.6rem',
+      height: '1.6rem',
+      borderRadius: '50%',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
   };
 
   const now = new Date();
@@ -28,39 +58,36 @@
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
-
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const headerHtml = days.map(d => `<div style="${s.dayHeader}">${d}</div>`).join('');
-
-  let cellsHtml = '';
-  for (let i = 0; i < 42; i++) {
-    const dayNum = i - firstDay + 1;
-    if (dayNum < 1 || dayNum > daysInMonth) {
-      cellsHtml += `<div style="${s.dayCellEmpty}"></div>`;
-    } else {
-      const isToday = dayNum === today;
-      const numStyle = isToday ? s.todayNum : s.dayNum;
-      cellsHtml += `<div style="${isToday ? s.dayCellActive : s.dayCellActive}">
-        <span style="${numStyle}">${dayNum}</span>
-      </div>`;
-    }
-  }
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   function ContentCalendar() {
-    return React.createElement('div', { dangerouslySetInnerHTML: { __html: `
-      <div style="${s.page}">
-        <h2 style="${s.h2}">Content Calendar</h2>
-        <div style="${s.banner}">
-          📅 Schedule and plan your content
-        </div>
-        <div style="${s.card}">
-          <div style="text-align:center;font-weight:600;font-size:1.1rem;color:var(--ck-text-primary);margin-bottom:1rem">${monthName}</div>
-          <div style="${s.grid7}">${headerHtml}</div>
-          <div style="${s.grid7};margin-top:4px">${cellsHtml}</div>
-          <p style="${s.mutedSm}">Scheduled posts will appear on their respective dates. Drag to reschedule.</p>
-        </div>
-      </div>
-    ` } });
+    const cells = [];
+    for (let i = 0; i < 42; i++) {
+      const day = i - firstDay + 1;
+      if (day < 1 || day > daysInMonth) {
+        cells.push(h('div', { key: i, style: theme.cellEmpty }));
+      } else {
+        const isToday = day === today;
+        cells.push(
+          h('div', { key: i, className: 'p-2', style: theme.cell },
+            h('span', { style: isToday ? theme.todayBadge : theme.dayNum }, day),
+          ),
+        );
+      }
+    }
+
+    return h('div', { className: 'p-8 max-w-4xl mx-auto' },
+      h('h2', { className: 'text-2xl font-bold mb-6', style: theme.text }, 'Content Calendar'),
+      h('div', { className: 'p-4 mb-6 text-sm', style: theme.banner }, '📅 Schedule and plan your content'),
+      h('div', { className: 'p-6', style: theme.card },
+        h('div', { className: 'text-center font-semibold text-lg mb-4', style: theme.text }, monthName),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '4px', marginBottom: '4px' } },
+          ...dayNames.map(d => h('div', { key: d, className: 'text-center py-2 font-semibold', style: theme.dayHeader }, d)),
+        ),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '4px' } }, ...cells),
+        h('p', { className: 'text-xs mt-4', style: theme.textFaint }, 'Scheduled posts will appear on their respective dates.'),
+      ),
+    );
   }
 
   (window as any).KitchenPlugin.registerTab('marketing', 'content-calendar', ContentCalendar);

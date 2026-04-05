@@ -2,66 +2,72 @@
  * Accounts Tab — self-registering browser bundle
  */
 (function () {
-  const React = (window as any).React;
-  if (!React) return;
+  const R = (window as any).React;
+  if (!R) return;
+  const h = R.createElement;
 
-  const s = {
-    page: 'padding:2rem;max-width:1200px;margin:0 auto',
-    h2: 'font-size:1.5rem;font-weight:700;color:var(--ck-text-primary);margin-bottom:1.5rem',
-    card: 'background:var(--ck-bg-glass);border:1px solid var(--ck-border-subtle);border-radius:14px;padding:1.5rem;backdrop-filter:blur(18px) saturate(1.25)',
-    cardTitle: 'font-size:1.1rem;font-weight:600;color:var(--ck-text-primary);margin-bottom:1rem',
-    muted: 'color:var(--ck-text-secondary);font-size:0.9rem',
-    mutedSm: 'color:var(--ck-text-tertiary);font-size:0.85rem',
-    banner: 'background:var(--ck-bg-glass);border:1px solid rgba(237,199,80,0.25);border-radius:14px;padding:1.25rem;color:rgba(237,199,80,0.9);font-size:0.9rem;margin-bottom:1.5rem;backdrop-filter:blur(18px)',
-    platformGrid: 'display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.5rem',
-    platformBtn: 'border:1px solid var(--ck-border-subtle);border-radius:12px;padding:1.25rem 1rem;cursor:pointer;text-align:center;transition:all 0.15s;background:var(--ck-bg-glass);backdrop-filter:blur(18px)',
-    platformIcon: 'font-size:1.75rem;margin-bottom:0.5rem',
-    platformName: 'font-size:0.85rem;font-weight:500;color:var(--ck-text-primary)',
-    emptyIcon: 'font-size:2.5rem;margin-bottom:0.75rem;opacity:0.6',
-    emptyCenter: 'text-align:center;padding:2.5rem 0',
+  const theme = {
+    text: { color: 'var(--ck-text-primary)' },
+    textMuted: { color: 'var(--ck-text-secondary)' },
+    textFaint: { color: 'var(--ck-text-tertiary)' },
+    card: {
+      background: 'var(--ck-bg-glass)',
+      border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '14px',
+      backdropFilter: 'blur(18px) saturate(1.25)',
+    },
+    banner: {
+      background: 'var(--ck-bg-glass)',
+      border: '1px solid rgba(237,199,80,0.25)',
+      borderRadius: '14px',
+      color: 'rgba(237,199,80,0.9)',
+      backdropFilter: 'blur(18px)',
+    },
+    platformBtn: {
+      background: 'var(--ck-bg-glass)',
+      border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '12px',
+      cursor: 'pointer',
+      backdropFilter: 'blur(18px)',
+      transition: 'border-color 0.15s, background 0.15s',
+    },
   };
 
-  // Hover effect via onmouseover isn't possible with dangerouslySetInnerHTML,
-  // but the border glow gives enough visual affordance
+  const platforms = [
+    { icon: '𝕏', name: 'Twitter / X' },
+    { icon: '📷', name: 'Instagram' },
+    { icon: '🎬', name: 'YouTube' },
+    { icon: '💼', name: 'LinkedIn' },
+  ];
 
   function Accounts() {
-    return React.createElement('div', { dangerouslySetInnerHTML: { __html: `
-      <div style="${s.page}">
-        <h2 style="${s.h2}">Social Media Accounts</h2>
-        <div style="${s.banner}">
-          🔗 Connect and manage your social media accounts
-        </div>
-        <div style="${s.card};margin-bottom:1rem">
-          <h3 style="${s.cardTitle}">Add New Account</h3>
-          <div style="${s.platformGrid}">
-            <div style="${s.platformBtn}">
-              <div style="${s.platformIcon}">𝕏</div>
-              <div style="${s.platformName}">Twitter / X</div>
-            </div>
-            <div style="${s.platformBtn}">
-              <div style="${s.platformIcon}">📷</div>
-              <div style="${s.platformName}">Instagram</div>
-            </div>
-            <div style="${s.platformBtn}">
-              <div style="${s.platformIcon}">🎬</div>
-              <div style="${s.platformName}">YouTube</div>
-            </div>
-            <div style="${s.platformBtn}">
-              <div style="${s.platformIcon}">💼</div>
-              <div style="${s.platformName}">LinkedIn</div>
-            </div>
-          </div>
-        </div>
-        <div style="${s.card}">
-          <h3 style="${s.cardTitle}">Connected Accounts</h3>
-          <div style="${s.emptyCenter}">
-            <div style="${s.emptyIcon}">🔌</div>
-            <p style="${s.muted}">No accounts connected yet</p>
-            <p style="${s.mutedSm}">Click a platform above to get started</p>
-          </div>
-        </div>
-      </div>
-    ` } });
+    return h('div', { className: 'p-8 max-w-5xl mx-auto' },
+      h('h2', { className: 'text-2xl font-bold mb-6', style: theme.text }, 'Social Media Accounts'),
+      h('div', { className: 'p-4 mb-6 text-sm', style: theme.banner }, '🔗 Connect and manage your social media accounts'),
+      h('div', { className: 'p-6 mb-4', style: theme.card },
+        h('h3', { className: 'text-lg font-semibold mb-4', style: theme.text }, 'Add New Account'),
+        h('div', { className: 'grid grid-cols-4 gap-3' },
+          ...platforms.map(p =>
+            h('div', {
+              key: p.name,
+              className: 'p-5 text-center',
+              style: theme.platformBtn,
+            },
+              h('div', { className: 'text-2xl mb-2' }, p.icon),
+              h('div', { className: 'text-sm font-medium', style: theme.text }, p.name),
+            ),
+          ),
+        ),
+      ),
+      h('div', { className: 'p-6', style: theme.card },
+        h('h3', { className: 'text-lg font-semibold mb-3', style: theme.text }, 'Connected Accounts'),
+        h('div', { className: 'text-center py-8' },
+          h('div', { className: 'text-4xl mb-3 opacity-60' }, '🔌'),
+          h('p', { className: 'text-sm', style: theme.textMuted }, 'No accounts connected yet'),
+          h('p', { className: 'text-xs mt-1', style: theme.textFaint }, 'Click a platform above to get started'),
+        ),
+      ),
+    );
   }
 
   (window as any).KitchenPlugin.registerTab('marketing', 'accounts', Accounts);
