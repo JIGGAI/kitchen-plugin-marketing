@@ -1,60 +1,44 @@
-/**
- * Simple build script for Marketing Plugin
- */
-
-const { build } = require('esbuild');
-const { readFileSync, writeFileSync } = require('fs');
+#!/usr/bin/env node
+const { execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
-async function buildPlugin() {
-  console.log('Building Marketing Plugin...');
+console.log('Building kitchen-plugin-marketing...');
 
-  // Build API routes
-  await build({
-    entryPoints: ['src/api/routes.ts'],
-    bundle: true,
-    outfile: 'dist/api/routes.js',
-    format: 'cjs',
-    platform: 'node',
-    target: 'node18',
-    external: ['next/server']
-  });
-
-  // Build tab components as simple modules
-  const tabs = ['content-library', 'content-calendar', 'analytics', 'accounts'];
-  
-  for (const tab of tabs) {
-    const source = readFileSync(`src/tabs/${tab}.tsx`, 'utf-8');
-    
-    // Simple transformation - extract the return template literal
-    const match = source.match(/return\s+`([\s\S]*?)`;/);
-    if (match) {
-      const template = match[1];
-      const jsContent = `
-// Marketing Plugin - ${tab} tab
-(function() {
-  const html = \`${template}\`;
-  
-  // Simple DOM injection for demo
-  if (typeof document !== 'undefined') {
-    const container = document.getElementById('plugin-content');
-    if (container) {
-      container.innerHTML = html;
-    }
-  }
-  
-  // Export for potential import
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { html };
-  }
-})();
-      `.trim();
-      
-      writeFileSync(`dist/tabs/${tab}.js`, jsContent);
-    }
-  }
-
-  console.log('Build complete!');
+// Create dist directory
+const distDir = path.join(__dirname, '..', 'dist');
+if (!fs.existsSync(distDir)) {
+  fs.mkdirSync(distDir, { recursive: true });
 }
 
-buildPlugin().catch(console.error);
+// Create dist/api and dist/tabs directories
+const distApiDir = path.join(distDir, 'api');
+const distTabsDir = path.join(distDir, 'tabs');
+fs.mkdirSync(distApiDir, { recursive: true });
+fs.mkdirSync(distTabsDir, { recursive: true });
+
+// Copy source files to dist (simple copy for now)
+try {
+  execSync(`cp -r src/* ${distDir}/`, { stdio: 'inherit' });
+  console.log('✓ TypeScript files copied to dist/');
+
+  // Copy package.json and other required files
+  execSync(`cp package.json ${distDir}/`, { stdio: 'inherit' });
+  execSync(`cp README.md ${distDir}/`, { stdio: 'inherit' });
+  
+  // Copy database files
+  execSync(`cp -r db ${distDir}/`, { stdio: 'inherit' });
+  execSync(`cp drizzle.config.ts ${distDir}/`, { stdio: 'inherit' });
+  
+  console.log('✓ Package files copied');
+  
+  console.log('✓ Build complete! Plugin ready for installation.');
+  console.log('');
+  console.log('Next steps:');
+  console.log('1. Install in ClawKitchen: npm install /path/to/kitchen-plugin-marketing');
+  console.log('2. Or publish to npm: npm publish');
+  
+} catch (error) {
+  console.error('✗ Build failed:', error.message);
+  process.exit(1);
+}
