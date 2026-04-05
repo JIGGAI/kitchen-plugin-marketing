@@ -6,50 +6,35 @@
   if (!R) return;
   const h = R.createElement;
 
-  const theme = {
+  const t = {
     text: { color: 'var(--ck-text-primary)' },
-    textMuted: { color: 'var(--ck-text-secondary)' },
-    textFaint: { color: 'var(--ck-text-tertiary)' },
+    muted: { color: 'var(--ck-text-secondary)' },
+    faint: { color: 'var(--ck-text-tertiary)' },
     card: {
-      background: 'var(--ck-bg-glass)',
+      background: 'rgba(255,255,255,0.03)',
       border: '1px solid var(--ck-border-subtle)',
-      borderRadius: '14px',
-      backdropFilter: 'blur(18px) saturate(1.25)',
+      borderRadius: '10px',
+      padding: '1rem',
     },
-    banner: {
-      background: 'var(--ck-bg-glass)',
-      border: '1px solid rgba(72,187,120,0.25)',
-      borderRadius: '14px',
-      color: 'rgba(72,187,120,0.9)',
-      backdropFilter: 'blur(18px)',
-    },
-    dayHeader: { color: 'var(--ck-text-tertiary)', fontSize: '0.75rem', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-    cell: {
-      border: '1px solid var(--ck-border-subtle)',
-      borderRadius: '8px',
-      minHeight: '5rem',
-      background: 'rgba(255,255,255,0.02)',
-    },
-    cellEmpty: {
-      border: '1px solid transparent',
-      borderRadius: '8px',
-      minHeight: '5rem',
-      opacity: 0.2,
-    },
+    dayHeader: { color: 'var(--ck-text-tertiary)', fontSize: '0.75rem', textTransform: 'uppercase' as const, letterSpacing: '0.05em', fontWeight: 600 },
+    cell: { border: '1px solid var(--ck-border-subtle)', borderRadius: '6px', minHeight: '4rem', padding: '0.35rem 0.5rem' },
+    cellEmpty: { minHeight: '4rem', opacity: 0.15 },
     dayNum: { color: 'var(--ck-text-secondary)', fontSize: '0.8rem', fontWeight: 500 },
     todayBadge: {
       color: 'rgba(99,179,237,1)',
       background: 'rgba(99,179,237,0.15)',
       fontSize: '0.8rem',
       fontWeight: 700,
-      width: '1.6rem',
-      height: '1.6rem',
+      width: '1.5rem',
+      height: '1.5rem',
       borderRadius: '50%',
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
     },
   };
+
+  const grid7 = { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '3px' };
 
   const now = new Date();
   const year = now.getFullYear();
@@ -65,28 +50,24 @@
     for (let i = 0; i < 42; i++) {
       const day = i - firstDay + 1;
       if (day < 1 || day > daysInMonth) {
-        cells.push(h('div', { key: i, style: theme.cellEmpty }));
+        cells.push(h('div', { key: i, style: t.cellEmpty }));
       } else {
         const isToday = day === today;
         cells.push(
-          h('div', { key: i, className: 'p-2', style: theme.cell },
-            h('span', { style: isToday ? theme.todayBadge : theme.dayNum }, day),
+          h('div', { key: i, style: t.cell },
+            h('span', { style: isToday ? t.todayBadge : t.dayNum }, day),
           ),
         );
       }
     }
 
-    return h('div', { className: 'p-8 max-w-4xl mx-auto' },
-      h('h2', { className: 'text-2xl font-bold mb-6', style: theme.text }, 'Content Calendar'),
-      h('div', { className: 'p-4 mb-6 text-sm', style: theme.banner }, '📅 Schedule and plan your content'),
-      h('div', { className: 'p-6', style: theme.card },
-        h('div', { className: 'text-center font-semibold text-lg mb-4', style: theme.text }, monthName),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '4px', marginBottom: '4px' } },
-          ...dayNames.map(d => h('div', { key: d, className: 'text-center py-2 font-semibold', style: theme.dayHeader }, d)),
-        ),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '4px' } }, ...cells),
-        h('p', { className: 'text-xs mt-4', style: theme.textFaint }, 'Scheduled posts will appear on their respective dates.'),
+    return h('div', { style: t.card },
+      h('div', { className: 'text-sm font-medium mb-3', style: t.text }, monthName),
+      h('div', { style: { ...grid7, marginBottom: '3px' } },
+        ...dayNames.map(d => h('div', { key: d, className: 'text-center py-1', style: t.dayHeader }, d)),
       ),
+      h('div', { style: grid7 }, ...cells),
+      h('div', { className: 'mt-3 text-xs', style: t.faint }, 'Scheduled posts will appear on their respective dates.'),
     );
   }
 
