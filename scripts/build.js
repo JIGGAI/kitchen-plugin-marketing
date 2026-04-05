@@ -26,12 +26,19 @@ try {
   );
   console.log('✓ Built dist/index.js (main entry)');
 
-  // 2. Build API routes
+  // 2. Build API routes (express helper; mainly for local dev)
   execSync(
     `esbuild src/api/routes.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/api/routes.js ${externals}`,
     { cwd: root, stdio: 'inherit' }
   );
-  console.log('✓ Built dist/api/routes.js (API routes)');
+  console.log('✓ Built dist/api/routes.js (express routes)');
+
+  // 2b. Build API handler (Kitchen expects handleRequest())
+  execSync(
+    `esbuild src/api/handler.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/api/handler.js ${externals}`,
+    { cwd: root, stdio: 'inherit' }
+  );
+  console.log('✓ Built dist/api/handler.js (Kitchen API handler)');
 
   // 3. Build browser tabs
   const tabsDir = path.join(root, 'src/tabs');

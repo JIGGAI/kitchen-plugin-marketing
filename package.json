@@ -1,6 +1,6 @@
 {
   "name": "@jiggai/kitchen-plugin-marketing",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Marketing Suite plugin for ClawKitchen",
   "main": "dist/index.js",
   "files": [
@@ -45,7 +45,7 @@
         "bundle": "./dist/tabs/accounts.js"
       }
     ],
-    "apiRoutes": "./dist/api/routes.js",
+    "apiRoutes": "./dist/api/handler.js",
     "migrations": "./db/migrations"
   },
   "scripts": {
