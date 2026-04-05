@@ -1,7 +1,7 @@
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import type { KitchenPluginContext } from './types-kitchen';
-import { initializeDatabase, encryptCredentials } from '../db';
+import { initializeDatabase, encryptCredentials, decryptCredentials } from '../db';
 import * as schema from '../db/schema';
 import type {
   ApiError,
@@ -50,26 +50,228 @@ function getUserId(req: PluginRequest): string {
   return req.headers['x-user-id'] || 'system';
 }
 
-export async function handleRequest(req: PluginRequest, _ctx: KitchenPluginContext): Promise<PluginResponse> {
+/* ================================================================== */
+/*  Postiz integration helpers                                         */
+/* ================================================================== */
+
+interface PostizConfig {
+  apiKey: string;
+  baseUrl: string; // e.g. https://api.postiz.com/public/v1  or self-hosted
+}
+
+function getPostizConfig(req: PluginRequest): PostizConfig | null {
+  // Check query params first, then headers
+  const apiKey = req.query.postizApiKey || req.headers['x-postiz-api-key'];
+  const baseUrl = req.query.postizBaseUrl || req.headers['x-postiz-base-url'] || 'https://api.postiz.com/public/v1';
+  if (!apiKey) return null;
+  return { apiKey, baseUrl: baseUrl.replace(/\/+$/, '') };
+}
+
+async function postizFetch(config: PostizConfig, path: string, options?: RequestInit): Promise<Response> {
+  return fetch(`${config.baseUrl}${path}`, {
+    ...options,
+    headers: {
+      'Authorization': config.apiKey,
+      'Content-Type': 'application/json',
+      ...(options?.headers || {}),
+    },
+  });
+}
+
+/* ================================================================== */
+/*  Auto-detect providers                                              */
+/* ================================================================== */
+
+interface DetectedProvider {
+  id: string;
+  type: 'postiz' | 'gateway' | 'skill';
+  platform: string;
+  displayName: string;
+  username?: string;
+  avatar?: string;
+  isActive: boolean;
+  capabilities: string[];
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Detect available social posting providers from:
+ * 1. Postiz (if API key configured) — list connected integrations
+ * 2. Gateway message channels (discord, telegram) — can post to channels
+ * 3. Skills that support posting (none currently, placeholder)
+ */
+async function detectProviders(req: PluginRequest, teamId: string): Promise<DetectedProvider[]> {
+  const providers: DetectedProvider[] = [];
+
+  // --- 1. Postiz integrations ---
+  const postizCfg = getPostizConfig(req);
+  if (postizCfg) {
+    try {
+      const res = await postizFetch(postizCfg, '/integrations');
+      if (res.ok) {
+        const data = await res.json();
+        const integrations = Array.isArray(data) ? data : (data.integrations || []);
+        for (const integ of integrations) {
+          providers.push({
+            id: `postiz:${integ.id}`,
+            type: 'postiz',
+            platform: integ.providerIdentifier || integ.provider || 'unknown',
+            displayName: integ.name || integ.providerIdentifier || 'Postiz account',
+            username: integ.username || undefined,
+            avatar: integ.picture || integ.avatar || undefined,
+            isActive: !integ.disabled,
+            capabilities: ['post', 'schedule'],
+            meta: { postizId: integ.id, provider: integ.providerIdentifier },
+          });
+        }
+      }
+    } catch {
+      // Postiz not reachable — skip silently
+    }
+  }
+
+  // --- 2. Gateway messaging channels ---
+  // These are read from the openclaw config and exposed as "posting targets"
+  // Discord and Telegram are confirmed enabled in this installation.
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const os = await import('os');
+    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const plugins = cfg?.plugins?.entries || {};
+
+      if (plugins.discord?.enabled) {
+        providers.push({
+          id: 'gateway:discord',
+          type: 'gateway',
+          platform: 'discord',
+          displayName: 'Discord (via OpenClaw)',
+          isActive: true,
+          capabilities: ['post'],
+          meta: { channel: 'discord' },
+        });
+      }
+
+      if (plugins.telegram?.enabled) {
+        providers.push({
+          id: 'gateway:telegram',
+          type: 'gateway',
+          platform: 'telegram',
+          displayName: 'Telegram (via OpenClaw)',
+          isActive: true,
+          capabilities: ['post'],
+          meta: { channel: 'telegram' },
+        });
+      }
+    }
+  } catch {
+    // Config read failed — skip
+  }
+
+  return providers;
+}
+
+/* ================================================================== */
+/*  Postiz: create/schedule post                                       */
+/* ================================================================== */
+
+interface PublishRequest {
+  content: string;
+  integrationIds: string[]; // postiz integration IDs
+  scheduledAt?: string; // ISO datetime
+  settings?: Record<string, unknown>; // per-platform settings
+  mediaUrls?: string[];
+}
+
+async function postizPublish(config: PostizConfig, body: PublishRequest): Promise<PluginResponse> {
+  const payload: Record<string, unknown> = {
+    content: body.content,
+    integrationIds: body.integrationIds,
+  };
+
+  if (body.scheduledAt) {
+    payload.date = body.scheduledAt;
+  }
+
+  if (body.settings) {
+    payload.settings = body.settings;
+  }
+
+  if (body.mediaUrls && body.mediaUrls.length > 0) {
+    payload.media = body.mediaUrls.map((url) => ({ url }));
+  }
+
+  const res = await postizFetch(config, '/posts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    return apiError(res.status, 'POSTIZ_ERROR', data?.message || `Postiz returned ${res.status}`, data);
+  }
+
+  return { status: 201, data };
+}
+
+/* ================================================================== */
+/*  Request router                                                     */
+/* ================================================================== */
+
+export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContext): Promise<PluginResponse> {
   const teamId = getTeamId(req);
 
-  // NOTE: This plugin currently uses its own per-team SQLite DB via initializeDatabase(teamId).
-  // In the future we can move to ctx.db once Kitchen exposes per-plugin schema support.
+  // ---- /providers (auto-detect) ----
+  if (req.path === '/providers' && req.method === 'GET') {
+    try {
+      const providers = await detectProviders(req, teamId);
+      return { status: 200, data: { providers } };
+    } catch (error: any) {
+      return apiError(500, 'DETECT_ERROR', error?.message || 'Failed to detect providers');
+    }
+  }
 
-  // -----------------------------
-  // POSTS
-  // -----------------------------
+  // ---- /providers/postiz/integrations (raw passthrough) ----
+  if (req.path === '/providers/postiz/integrations' && req.method === 'GET') {
+    const postizCfg = getPostizConfig(req);
+    if (!postizCfg) return apiError(400, 'NO_POSTIZ', 'Postiz API key not configured');
+    try {
+      const res = await postizFetch(postizCfg, '/integrations');
+      const data = await res.json();
+      return { status: res.status, data };
+    } catch (error: any) {
+      return apiError(502, 'POSTIZ_UNREACHABLE', error?.message || 'Cannot reach Postiz');
+    }
+  }
+
+  // ---- /publish (post via Postiz) ----
+  if (req.path === '/publish' && req.method === 'POST') {
+    const postizCfg = getPostizConfig(req);
+    if (!postizCfg) return apiError(400, 'NO_POSTIZ', 'Postiz API key not configured');
+    const body = (req.body || {}) as PublishRequest;
+    if (!body.content || !body.integrationIds?.length) {
+      return apiError(400, 'VALIDATION_ERROR', 'content and integrationIds are required');
+    }
+    try {
+      return await postizPublish(postizCfg, body);
+    } catch (error: any) {
+      return apiError(502, 'POSTIZ_ERROR', error?.message || 'Publish failed');
+    }
+  }
+
+  // ---- /posts (local drafts) ----
   if (req.path === '/posts' && req.method === 'GET') {
     try {
       const { db } = initializeDatabase(teamId);
       const { limit, offset } = parsePagination(req.query);
 
       const conditions = [eq(schema.posts.teamId, teamId)];
-
       if (req.query.status) {
         conditions.push(eq(schema.posts.status, String(req.query.status)));
       }
-
       if (req.query.platform) {
         conditions.push(like(schema.posts.platforms, `%\"${req.query.platform}\"%`));
       }
@@ -110,7 +312,6 @@ export async function handleRequest(req: PluginRequest, _ctx: KitchenPluginConte
         limit,
         hasMore: offset + limit < total,
       };
-
       return { status: 200, data: payload };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Unknown error');
@@ -168,9 +369,7 @@ export async function handleRequest(req: PluginRequest, _ctx: KitchenPluginConte
     }
   }
 
-  // -----------------------------
-  // ACCOUNTS
-  // -----------------------------
+  // ---- /accounts (local stored accounts) ----
   if (req.path === '/accounts' && req.method === 'GET') {
     try {
       const { db } = initializeDatabase(teamId);
