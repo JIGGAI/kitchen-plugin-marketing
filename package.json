@@ -1,0 +1,55 @@
+{
+  "name": "kitchen-plugin-marketing",
+  "version": "0.1.2",
+  "description": "Marketing Suite plugin for ClawKitchen",
+  "main": "dist/index.js",
+  "kitchenPlugin": {
+    "id": "marketing",
+    "name": "Marketing Suite",
+    "teamTypes": [
+      "marketing-team",
+      "claw-marketing-team"
+    ],
+    "tabs": [
+      {
+        "id": "content-library",
+        "label": "Content Library",
+        "icon": "library",
+        "bundle": "./dist/tabs/content-library.js"
+      },
+      {
+        "id": "content-calendar",
+        "label": "Content Calendar",
+        "icon": "calendar",
+        "bundle": "./dist/tabs/content-calendar.js"
+      },
+      {
+        "id": "analytics",
+        "label": "Analytics",
+        "icon": "chart",
+        "bundle": "./dist/tabs/analytics.js"
+      },
+      {
+        "id": "accounts",
+        "label": "Accounts",
+        "icon": "users",
+        "bundle": "./dist/tabs/accounts.js"
+      }
+    ],
+    "apiRoutes": "./dist/api/routes.js",
+    "migrations": "./db/migrations"
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "dev": "node scripts/dev.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.5",
+    "drizzle-orm": "^0.38.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
+    "esbuild": "^0.19.12",
+    "typescript": "^5.0.0"
+  }
+}
