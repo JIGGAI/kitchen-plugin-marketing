@@ -454,5 +454,68 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // ---- /posts/:id (get single post) ----
+  const singlePostMatch = req.path.match(/^\/posts\/([a-f0-9-]+)$/);
+  if (singlePostMatch && req.method === 'GET') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [post] = await db
+        .select()
+        .from(schema.posts)
+        .where(and(eq(schema.posts.id, singlePostMatch[1]), eq(schema.posts.teamId, teamId)));
+      if (!post) return apiError(404, 'NOT_FOUND', 'Post not found');
+      return {
+        status: 200,
+        data: {
+          ...post,
+          platforms: JSON.parse(post.platforms || '[]'),
+          tags: JSON.parse(post.tags || '[]'),
+          mediaIds: JSON.parse(post.mediaIds || '[]'),
+        },
+      };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Unknown error');
+    }
+  }
+
+  // ---- DELETE /posts/:id ----
+  if (singlePostMatch && req.method === 'DELETE') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [post] = await db
+        .select()
+        .from(schema.posts)
+        .where(and(eq(schema.posts.id, singlePostMatch[1]), eq(schema.posts.teamId, teamId)));
+      if (!post) return apiError(404, 'NOT_FOUND', 'Post not found');
+      await db.delete(schema.posts).where(eq(schema.posts.id, singlePostMatch[1]));
+      return { status: 200, data: { deleted: true, id: singlePostMatch[1] } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Unknown error');
+    }
+  }
+
+  // ---- PATCH /posts/:id ----
+  if (singlePostMatch && req.method === 'PATCH') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [post] = await db
+        .select()
+        .from(schema.posts)
+        .where(and(eq(schema.posts.id, singlePostMatch[1]), eq(schema.posts.teamId, teamId)));
+      if (!post) return apiError(404, 'NOT_FOUND', 'Post not found');
+      const body = (req.body || {}) as Partial<PostCreateRequest>;
+      const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+      if (body.content !== undefined) updates.content = body.content;
+      if (body.platforms !== undefined) updates.platforms = JSON.stringify(body.platforms);
+      if (body.status !== undefined) updates.status = body.status;
+      if (body.scheduledAt !== undefined) updates.scheduledAt = body.scheduledAt || null;
+      if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
+      await db.update(schema.posts).set(updates).where(eq(schema.posts.id, singlePostMatch[1]));
+      return { status: 200, data: { updated: true, id: singlePostMatch[1] } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Unknown error');
+    }
+  }
+
   return apiError(501, 'NOT_IMPLEMENTED', `No handler for ${req.method} ${req.path}`);
 }
