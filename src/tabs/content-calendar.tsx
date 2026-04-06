@@ -490,7 +490,7 @@
     function WeekView() {
       const weekStart = anchor;
       const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-      const hours = Array.from({ length: 18 }, (_, i) => i + 6); // 6 AM – 11 PM
+      const hours = Array.from({ length: 24 }, (_, i) => i); // 0 (12 AM) – 23 (11 PM)
 
       return h('div', null,
         // Column headers
