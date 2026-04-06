@@ -691,13 +691,15 @@
      * ================================================================= */
     function CreateModal() {
       if (!modalOpen) return null;
-      const charLimit = useMemo(() => {
-        if (modalPlatforms.length === 0) return undefined;
+      // NOTE: This is a render helper (not a React component) to avoid remounting on every keystroke.
+      // Nested component identities change on each render and can cause textarea focus loss.
+      let charLimit: number | undefined = undefined;
+      if (modalPlatforms.length > 0) {
         const limits = modalPlatforms
           .map((p: string) => drivers.find((d) => d.platform === p)?.capabilities?.maxLength)
           .filter((l): l is number => l !== undefined);
-        return limits.length > 0 ? Math.min(...limits) : undefined;
-      }, [modalPlatforms, drivers]);
+        if (limits.length > 0) charLimit = Math.min(...limits);
+      }
 
       return h(Portal, null,
         h('div', { style: s.overlay, onClick: () => setModalOpen(false) },
@@ -1044,10 +1046,11 @@
 
       loading
         ? h('div', { style: { textAlign: 'center', padding: '3rem', color: 'var(--ck-text-tertiary)' } }, 'Loading calendar…')
-        : view === 'week' ? h(WeekView, null) : h(MonthView, null),
+        // Render helpers (not nested React components) to prevent remount/focus loss
+        : view === 'week' ? WeekView() : MonthView(),
 
-      h(PreviewModal, null),
-      h(CreateModal, null),
+      PreviewModal(),
+      CreateModal(),
     );
   }
 
