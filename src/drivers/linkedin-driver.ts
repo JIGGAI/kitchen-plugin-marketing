@@ -3,7 +3,7 @@ import { BaseDriver } from './base-driver';
 export class LinkedInDriver extends BaseDriver {
   readonly platform = 'linkedin';
   readonly label = 'LinkedIn';
-  readonly icon = '💼';
+  readonly icon = 'in';
   readonly postizProvider = 'linkedin';
 
   protected getMaxLength() { return 3000; }

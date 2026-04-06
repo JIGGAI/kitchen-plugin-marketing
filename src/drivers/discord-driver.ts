@@ -4,7 +4,7 @@ import type { PostContent, PostResult } from './types';
 export class DiscordDriver extends BaseDriver {
   readonly platform = 'discord';
   readonly label = 'Discord';
-  readonly icon = '💬';
+  readonly icon = 'DS';
   readonly postizProvider = 'discord';
 
   protected getMaxLength() { return 2000; }

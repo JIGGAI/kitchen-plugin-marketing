@@ -3,7 +3,7 @@ import { BaseDriver } from './base-driver';
 export class FacebookDriver extends BaseDriver {
   readonly platform = 'facebook';
   readonly label = 'Facebook';
-  readonly icon = '📘';
+  readonly icon = 'f';
   readonly postizProvider = 'facebook';
 
   protected getMaxLength() { return 63206; }

@@ -3,7 +3,8 @@ import { BaseDriver } from './base-driver';
 export class InstagramDriver extends BaseDriver {
   readonly platform = 'instagram';
   readonly label = 'Instagram';
-  readonly icon = '📷';
+  // Text fallback; UI renders these inside icon circles
+  readonly icon = 'IG';
   readonly postizProvider = 'instagram';
 
   protected getMaxLength() { return 2200; }

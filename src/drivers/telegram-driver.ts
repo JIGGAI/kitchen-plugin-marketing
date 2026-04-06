@@ -4,7 +4,7 @@ import type { PostContent, PostResult } from './types';
 export class TelegramDriver extends BaseDriver {
   readonly platform = 'telegram';
   readonly label = 'Telegram';
-  readonly icon = '✈️';
+  readonly icon = 'TG';
   readonly postizProvider = 'telegram';
 
   protected getMaxLength() { return 4096; }

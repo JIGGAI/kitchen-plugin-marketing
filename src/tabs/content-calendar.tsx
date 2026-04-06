@@ -137,6 +137,10 @@
       borderRadius: '10px', padding: '0.75rem', color: 'var(--ck-text-primary)',
       width: '100%', minHeight: '200px', resize: 'vertical' as const, fontFamily: 'inherit',
       fontSize: '0.9rem', outline: 'none',
+      // Hard-force LTR to avoid any inherited RTL / bidi overrides in host app
+      direction: 'ltr' as const,
+      unicodeBidi: 'plaintext' as const,
+      textAlign: 'left' as const,
     },
     input: {
       background: 'rgba(255,255,255,0.03)', border: '1px solid var(--ck-border-subtle)',
@@ -231,6 +235,12 @@
     const [modalContent, setModalContent] = useState('');
     const [modalPlatforms, setModalPlatforms] = useState<string[]>([]);
     const [modalMediaUrl, setModalMediaUrl] = useState('');
+    const [modalShowMedia, setModalShowMedia] = useState(false);
+    const [modalUploading, setModalUploading] = useState(false);
+    const [modalMediaLibrary, setModalMediaLibrary] = useState<any[]>([]);
+    const [modalSelectedMediaIds, setModalSelectedMediaIds] = useState<string[]>([]);
+    const modalFileInputRef = useRef<HTMLInputElement | null>(null);
+
     const [modalSaving, setModalSaving] = useState(false);
     const [modalPublishing, setModalPublishing] = useState(false);
     const [modalError, setModalError] = useState<string | null>(null);
@@ -266,6 +276,54 @@
       } catch { /* */ }
     }, [teamId, postizHeaders]);
 
+    const loadMedia = useCallback(async () => {
+      try {
+        const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=200`);
+        const json = await res.json();
+        setModalMediaLibrary(Array.isArray(json.data) ? json.data : []);
+      } catch { /* */ }
+    }, [teamId]);
+
+    const handleModalFileUpload = useCallback(async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setModalUploading(true);
+      setModalError(null);
+      try {
+        for (const file of Array.from(files)) {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+
+          const up = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type }),
+          });
+          if (!up.ok) {
+            const err = await up.json().catch(() => ({}));
+            throw new Error(err?.message || `Upload failed (${up.status})`);
+          }
+          const item = await up.json().catch(() => null);
+          if (item?.id) {
+            setModalSelectedMediaIds((prev: string[]) => (prev.includes(item.id) ? prev : [...prev, item.id]));
+          }
+        }
+        await loadMedia();
+      } catch (e: any) {
+        setModalError(e?.message || 'Upload failed');
+      } finally {
+        setModalUploading(false);
+        if (modalFileInputRef.current) modalFileInputRef.current.value = '';
+      }
+    }, [teamId, loadMedia]);
+
+    const toggleModalMedia = (id: string) => {
+      setModalSelectedMediaIds((prev: string[]) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+    };
+
     useEffect(() => {
       setLoading(true);
       Promise.all([loadPosts(), loadDrivers()]).finally(() => setLoading(false));
@@ -291,6 +349,9 @@
       setModalContent('');
       setModalPlatforms([]);
       setModalMediaUrl('');
+      setModalShowMedia(false);
+      setModalSelectedMediaIds([]);
+      setModalMediaLibrary([]);
       setModalError(null);
       setModalSuccess(null);
       setModalOpen(true);
@@ -324,6 +385,7 @@
             platforms: modalPlatforms.length > 0 ? modalPlatforms : ['draft'],
             status: modalDate ? 'scheduled' : 'draft',
             scheduledAt: modalDate || undefined,
+            mediaIds: modalSelectedMediaIds,
           }),
         });
         if (!res.ok) throw new Error(`Save failed (${res.status})`);
@@ -350,6 +412,7 @@
             content: modalContent,
             platforms: modalPlatforms,
             scheduledAt: modalDate || undefined,
+            // NOTE: Postiz expects publicly reachable URLs; uploaded library media is local-only for now.
             mediaUrls: modalMediaUrl ? [modalMediaUrl] : undefined,
           }),
         });
@@ -368,6 +431,7 @@
             content: modalContent, platforms: modalPlatforms,
             status: modalDate ? 'scheduled' : 'published',
             scheduledAt: modalDate || undefined,
+            mediaIds: modalSelectedMediaIds,
           }),
         }).catch(() => {});
         setModalSuccess(modalDate ? 'Scheduled!' : 'Published!');
@@ -648,6 +712,7 @@
               // Textarea
               h('textarea', {
                 style: s.textarea,
+                dir: 'ltr',
                 value: modalContent,
                 onChange: (e: any) => setModalContent(e.target.value),
                 placeholder: 'Write something …',
@@ -656,8 +721,13 @@
               // Toolbar
               h('div', { style: { display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' } },
                 h('button', {
+                  type: 'button',
                   style: { ...s.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
-                  onClick: () => setModalMediaUrl(modalMediaUrl ? '' : ' '),
+                  onClick: async () => {
+                    const next = !modalShowMedia;
+                    setModalShowMedia(next);
+                    if (next) await loadMedia();
+                  },
                 }, '🖼 Insert Media'),
                 charLimit && h('span', {
                   style: {
@@ -666,14 +736,131 @@
                   },
                 }, `${modalContent.length}/${charLimit}`),
               ),
-              // Media URL input
-              modalMediaUrl !== '' && h('input', {
-                style: s.input,
-                type: 'url',
-                value: modalMediaUrl.trim(),
-                onChange: (e: any) => setModalMediaUrl(e.target.value),
-                placeholder: 'Paste image or video URL…',
-              }),
+              // Media panel (upload + library + URL)
+              modalShowMedia && h('div', {
+                style: {
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px solid var(--ck-border-subtle)',
+                  borderRadius: '10px',
+                  padding: '0.75rem',
+                },
+              },
+                h('div', { style: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' as const } },
+                  h('input', {
+                    ref: modalFileInputRef,
+                    type: 'file',
+                    accept: 'image/*,video/*',
+                    multiple: true,
+                    style: { display: 'none' },
+                    onChange: (e: any) => void handleModalFileUpload(e.target.files),
+                  }),
+                  h('button', {
+                    type: 'button',
+                    style: { ...s.btnGhost, padding: '0.35rem 0.6rem', fontSize: '0.75rem', opacity: modalUploading ? 0.7 : 1 },
+                    onClick: () => modalFileInputRef.current?.click(),
+                    disabled: modalUploading,
+                  }, modalUploading ? '⏳ Uploading…' : '📁 Upload'),
+                  h('button', {
+                    type: 'button',
+                    style: { ...s.btnGhost, padding: '0.35rem 0.6rem', fontSize: '0.75rem' },
+                    onClick: () => setModalShowMedia(false),
+                  }, 'Done'),
+                ),
+
+                h('input', {
+                  style: s.input,
+                  type: 'url',
+                  value: modalMediaUrl,
+                  onChange: (e: any) => setModalMediaUrl(e.target.value),
+                  placeholder: 'Paste a public image/video URL (needed for Postiz)…',
+                }),
+
+                // Selected media strip
+                modalSelectedMediaIds.length > 0 && h('div', { style: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.5rem', marginTop: '0.65rem' } },
+                  ...modalSelectedMediaIds.map((id: string) => {
+                    const item = modalMediaLibrary.find((m: any) => m.id === id);
+                    if (!item) return null;
+                    return h('div', {
+                      key: id,
+                      style: {
+                        position: 'relative' as const,
+                        width: '64px', height: '64px',
+                        borderRadius: '8px', overflow: 'hidden',
+                        border: '2px solid rgba(127,90,240,0.55)',
+                      },
+                    },
+                      item.mimeType?.startsWith('video/')
+                        ? h('div', {
+                            style: { width: '100%', height: '100%', background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' },
+                          }, '🎥')
+                        : h('img', { src: item.thumbnailDataUrl, style: { width: '100%', height: '100%', objectFit: 'cover' as const } }),
+                      h('button', {
+                        type: 'button',
+                        onClick: () => toggleModalMedia(id),
+                        style: {
+                          position: 'absolute' as const, top: '2px', right: '2px',
+                          background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+                          width: '18px', height: '18px', color: 'white', fontSize: '0.65rem',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        },
+                      }, '✕'),
+                    );
+                  }),
+                ),
+
+                // Library grid
+                h('div', { style: { marginTop: '0.65rem' } },
+                  h('div', { style: { fontSize: '0.75rem', fontWeight: 600, color: 'var(--ck-text-secondary)', marginBottom: '0.4rem' } }, 'Media Library'),
+                  modalMediaLibrary.length === 0
+                    ? h('div', { style: { fontSize: '0.75rem', color: 'var(--ck-text-tertiary)', padding: '0.5rem 0' } }, 'No media yet — upload something.')
+                    : h('div', {
+                        style: {
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(86px, 1fr))',
+                          gap: '0.5rem',
+                          maxHeight: '220px',
+                          overflowY: 'auto' as const,
+                          paddingRight: '4px',
+                        },
+                      },
+                        ...modalMediaLibrary.map((item: any) => {
+                          const selected = modalSelectedMediaIds.includes(item.id);
+                          const thumb = item.thumbnailDataUrl;
+                          return h('div', {
+                            key: item.id,
+                            onClick: () => toggleModalMedia(item.id),
+                            style: {
+                              position: 'relative' as const,
+                              width: '100%', paddingTop: '100%',
+                              borderRadius: '10px', overflow: 'hidden',
+                              cursor: 'pointer',
+                              border: selected ? '2px solid rgba(127,90,240,0.75)' : '1px solid var(--ck-border-subtle)',
+                              boxShadow: selected ? '0 0 10px rgba(127,90,240,0.25)' : 'none',
+                              background: 'rgba(0,0,0,0.25)',
+                            },
+                          },
+                            item.mimeType?.startsWith('video/')
+                              ? h('div', {
+                                  style: { position: 'absolute' as const, inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '1.4rem' },
+                                }, '🎥')
+                              : h('img', {
+                                  src: thumb,
+                                  style: { position: 'absolute' as const, inset: 0, width: '100%', height: '100%', objectFit: 'cover' as const },
+                                }),
+                            selected && h('div', {
+                              style: {
+                                position: 'absolute' as const, top: '6px', right: '6px',
+                                width: '20px', height: '20px', borderRadius: '50%',
+                                background: 'rgba(127,90,240,0.9)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: 'white', fontSize: '0.75rem', fontWeight: 800,
+                              },
+                            }, '✓'),
+                          );
+                        }),
+                      ),
+                ),
+              ),
             ),
             // Right — social-post-style preview
             h('div', { style: s.modalRight },
@@ -718,12 +905,24 @@
                         style: { color: 'var(--ck-text-tertiary)', fontSize: '0.85rem', fontStyle: 'italic' as const, padding: '1.5rem 0', textAlign: 'center' as const },
                       }, 'Start writing to see a preview'),
                 ),
-                // Media preview
-                modalMediaUrl && h('img', {
-                  src: modalMediaUrl,
-                  style: { width: '100%', display: 'block' },
-                  onError: (e: any) => { e.target.style.display = 'none'; },
-                }),
+                // Media preview (selected library media first, then URL)
+                (modalSelectedMediaIds.length > 0 || modalMediaUrl) && h('div', null,
+                  ...modalSelectedMediaIds.slice(0, 1).map((id: string) => {
+                    const item = modalMediaLibrary.find((m: any) => m.id === id);
+                    if (!item) return null;
+                    return item.mimeType?.startsWith('video/')
+                      ? h('div', {
+                          key: id,
+                          style: { background: 'rgba(0,0,0,0.4)', padding: '1.25rem', textAlign: 'center' as const, color: 'var(--ck-text-secondary)' },
+                        }, '🎥 Video')
+                      : h('img', { key: id, src: item.thumbnailDataUrl, style: { width: '100%', display: 'block' } });
+                  }),
+                  modalMediaUrl && h('img', {
+                    src: modalMediaUrl,
+                    style: { width: '100%', display: 'block' },
+                    onError: (e: any) => { e.target.style.display = 'none'; },
+                  }),
+                ),
                 // Engagement bar
                 h('div', {
                   style: {
