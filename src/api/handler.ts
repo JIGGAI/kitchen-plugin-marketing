@@ -1,7 +1,7 @@
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { join, extname } from 'path';
 import { homedir } from 'os';
 import type { KitchenPluginContext } from './types-kitchen';
 import { initializeDatabase, encryptCredentials, decryptCredentials } from '../db';
@@ -517,5 +517,234 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // ---- /media (upload, list, serve, delete) ----
+  const MEDIA_DIR = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing', 'media');
+
+  function ensureMediaDir(team: string) {
+    const dir = join(MEDIA_DIR, team);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  // POST /media — upload (base64 in JSON body)
+  if (req.path === '/media' && req.method === 'POST') {
+    try {
+      const body = req.body as {
+        data: string; // base64 (optionally with data: prefix)
+        filename?: string;
+        mimeType?: string;
+        alt?: string;
+        tags?: string[];
+      };
+      if (!body?.data) return apiError(400, 'VALIDATION_ERROR', 'data (base64) is required');
+
+      // Strip data URL prefix if present
+      let base64 = body.data;
+      let detectedMime = body.mimeType || 'application/octet-stream';
+      const dataUrlMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
+      if (dataUrlMatch) {
+        detectedMime = dataUrlMatch[1];
+        base64 = dataUrlMatch[2];
+      }
+
+      const buf = Buffer.from(base64, 'base64');
+      const id = randomUUID();
+      const ext = extname(body.filename || '') || mimeToExt(detectedMime);
+      const storedFilename = `${id}${ext}`;
+      const dir = ensureMediaDir(teamId);
+      const filePath = join(dir, storedFilename);
+      writeFileSync(filePath, buf);
+
+      const { db } = initializeDatabase(teamId);
+      const now = new Date().toISOString();
+      const userId = getUserId(req);
+
+      const record = {
+        id,
+        teamId,
+        filename: storedFilename,
+        originalName: body.filename || storedFilename,
+        mimeType: detectedMime,
+        size: buf.length,
+        width: null as number | null,
+        height: null as number | null,
+        alt: body.alt || null,
+        tags: JSON.stringify(body.tags || []),
+        url: `/api/plugins/marketing/media/${id}/file?team=${encodeURIComponent(teamId)}`,
+        thumbnailUrl: null as string | null,
+        createdAt: now,
+        createdBy: userId,
+      };
+
+      await db.insert(schema.media).values(record);
+
+      return {
+        status: 201,
+        data: {
+          id,
+          filename: record.originalName,
+          mimeType: detectedMime,
+          size: buf.length,
+          url: record.url,
+          alt: record.alt,
+          tags: body.tags || [],
+          createdAt: now,
+        },
+      };
+    } catch (error: any) {
+      return apiError(500, 'UPLOAD_ERROR', error?.message || 'Upload failed');
+    }
+  }
+
+  // GET /media — list media assets
+  if (req.path === '/media' && req.method === 'GET') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const { limit, offset } = parsePagination(req.query);
+
+      const conditions = [eq(schema.media.teamId, teamId)];
+      if (req.query.mimeType) {
+        conditions.push(like(schema.media.mimeType, `${req.query.mimeType}%`));
+      }
+
+      const totalResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.media)
+        .where(and(...conditions));
+      const total = totalResult[0]?.count ?? 0;
+
+      const items = await db
+        .select()
+        .from(schema.media)
+        .where(and(...conditions))
+        .orderBy(desc(schema.media.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      // For listing, include a small data URL thumbnail for images
+      const data = items.map((m) => {
+        let thumbnailDataUrl: string | undefined;
+        if (m.mimeType.startsWith('image/')) {
+          const fp = join(MEDIA_DIR, teamId, m.filename);
+          if (existsSync(fp)) {
+            const raw = readFileSync(fp);
+            // Only inline if under 2MB to keep responses reasonable
+            if (raw.length < 2 * 1024 * 1024) {
+              thumbnailDataUrl = `data:${m.mimeType};base64,${raw.toString('base64')}`;
+            }
+          }
+        }
+        return {
+          id: m.id,
+          filename: m.originalName,
+          mimeType: m.mimeType,
+          size: m.size,
+          url: m.url,
+          thumbnailDataUrl,
+          alt: m.alt,
+          tags: JSON.parse(m.tags || '[]'),
+          createdAt: m.createdAt,
+        };
+      });
+
+      return {
+        status: 200,
+        data: { data, total, offset, limit, hasMore: offset + limit < total },
+      };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to list media');
+    }
+  }
+
+  // GET /media/:id — single media item (metadata + data URL)
+  const mediaIdMatch = req.path.match(/^\/media\/([a-f0-9-]+)$/);
+  if (mediaIdMatch && req.method === 'GET') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [item] = await db
+        .select()
+        .from(schema.media)
+        .where(and(eq(schema.media.id, mediaIdMatch[1]), eq(schema.media.teamId, teamId)));
+      if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
+
+      let dataUrl: string | undefined;
+      const fp = join(MEDIA_DIR, teamId, item.filename);
+      if (existsSync(fp)) {
+        const raw = readFileSync(fp);
+        dataUrl = `data:${item.mimeType};base64,${raw.toString('base64')}`;
+      }
+
+      return {
+        status: 200,
+        data: {
+          id: item.id,
+          filename: item.originalName,
+          mimeType: item.mimeType,
+          size: item.size,
+          url: item.url,
+          dataUrl,
+          alt: item.alt,
+          tags: JSON.parse(item.tags || '[]'),
+          createdAt: item.createdAt,
+        },
+      };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to get media');
+    }
+  }
+
+  // GET /media/:id/file — serve raw file as base64 data URL (workaround for JSON-only proxy)
+  const mediaFileMatch = req.path.match(/^\/media\/([a-f0-9-]+)\/file$/);
+  if (mediaFileMatch && req.method === 'GET') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [item] = await db
+        .select()
+        .from(schema.media)
+        .where(and(eq(schema.media.id, mediaFileMatch[1]), eq(schema.media.teamId, teamId)));
+      if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
+
+      const fp = join(MEDIA_DIR, teamId, item.filename);
+      if (!existsSync(fp)) return apiError(404, 'NOT_FOUND', 'File missing from disk');
+
+      const raw = readFileSync(fp);
+      const dataUrl = `data:${item.mimeType};base64,${raw.toString('base64')}`;
+      return { status: 200, data: { dataUrl, mimeType: item.mimeType, filename: item.originalName } };
+    } catch (error: any) {
+      return apiError(500, 'FILE_ERROR', error?.message || 'Failed to serve file');
+    }
+  }
+
+  // DELETE /media/:id
+  if (mediaIdMatch && req.method === 'DELETE') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [item] = await db
+        .select()
+        .from(schema.media)
+        .where(and(eq(schema.media.id, mediaIdMatch[1]), eq(schema.media.teamId, teamId)));
+      if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
+
+      // Remove file from disk
+      const fp = join(MEDIA_DIR, teamId, item.filename);
+      try { unlinkSync(fp); } catch { /* ok if already gone */ }
+
+      await db.delete(schema.media).where(eq(schema.media.id, mediaIdMatch[1]));
+      return { status: 200, data: { deleted: true, id: mediaIdMatch[1] } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to delete media');
+    }
+  }
+
   return apiError(501, 'NOT_IMPLEMENTED', `No handler for ${req.method} ${req.path}`);
+}
+
+function mimeToExt(mime: string): string {
+  const map: Record<string, string> = {
+    'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+    'image/webp': '.webp', 'image/svg+xml': '.svg',
+    'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+    'audio/mpeg': '.mp3', 'audio/wav': '.wav',
+  };
+  return map[mime] || '';
 }

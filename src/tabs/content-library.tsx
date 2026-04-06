@@ -154,6 +154,11 @@
     const [scheduledAt, setScheduledAt] = useState('');
     const [mediaUrl, setMediaUrl] = useState('');
     const [showMedia, setShowMedia] = useState(false);
+    const [mediaLibrary, setMediaLibrary] = useState<any[]>([]);
+    const [showMediaPicker, setShowMediaPicker] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     const successTimeout = useRef<any>(null);
 
@@ -190,10 +195,67 @@
       } catch { /* ignore */ }
     }, [apiBase, teamId]);
 
+    const loadMedia = useCallback(async () => {
+      try {
+        const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=100`);
+        const json = await res.json();
+        setMediaLibrary(Array.isArray(json.data) ? json.data : []);
+      } catch { /* ignore */ }
+    }, [apiBase, teamId]);
+
+    const handleFileUpload = useCallback(async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setUploading(true);
+      setError(null);
+      try {
+        for (const file of Array.from(files)) {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.message || `Upload failed (${res.status})`);
+          }
+          const item = await res.json();
+          // Auto-select newly uploaded item
+          setSelectedMediaIds((prev) => [...prev, item.id]);
+        }
+        await loadMedia();
+        showSuccess(`Uploaded ${files.length} file${files.length > 1 ? 's' : ''}`);
+      } catch (e: any) {
+        setError(e?.message || 'Upload failed');
+      } finally {
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    }, [apiBase, teamId, loadMedia]);
+
+    const deleteMedia = useCallback(async (id: string) => {
+      try {
+        await fetch(`${apiBase}/media/${id}?team=${encodeURIComponent(teamId)}`, { method: 'DELETE' });
+        setSelectedMediaIds((prev) => prev.filter((x) => x !== id));
+        await loadMedia();
+      } catch { /* ignore */ }
+    }, [apiBase, teamId, loadMedia]);
+
+    const toggleMediaSelect = (id: string) => {
+      setSelectedMediaIds((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      );
+    };
+
     useEffect(() => {
       setLoading(true);
-      Promise.all([loadDrivers(), loadPosts()]).finally(() => setLoading(false));
-    }, [loadDrivers, loadPosts]);
+      Promise.all([loadDrivers(), loadPosts(), loadMedia()]).finally(() => setLoading(false));
+    }, [loadDrivers, loadPosts, loadMedia]);
 
     const connectedDrivers = useMemo(() => drivers.filter((d) => d.connected), [drivers]);
     const disconnectedDrivers = useMemo(() => drivers.filter((d) => !d.connected), [drivers]);
@@ -392,21 +454,167 @@
                   ),
             ),
 
-            // Media URL (collapsible)
+            // Media (upload, URL, or library picker)
             h('div', null,
               h('button', {
                 type: 'button',
                 onClick: () => setShowMedia(!showMedia),
                 style: { ...t.btnGhost, padding: '0.3rem 0.55rem', fontSize: '0.8rem' },
               }, showMedia ? '− Media' : '+ Media'),
-              showMedia && h('div', { className: 'mt-2' },
-                h('input', {
-                  type: 'url',
-                  value: mediaUrl,
-                  onChange: (e: any) => setMediaUrl(e.target.value),
-                  placeholder: 'Paste image or video URL…',
-                  style: t.input,
-                }),
+              showMedia && h('div', { className: 'mt-2 space-y-2' },
+
+                // Upload + URL row
+                h('div', { className: 'flex gap-2 items-center' },
+                  h('input', {
+                    ref: fileInputRef,
+                    type: 'file',
+                    accept: 'image/*,video/*',
+                    multiple: true,
+                    style: { display: 'none' },
+                    onChange: (e: any) => handleFileUpload(e.target.files),
+                  }),
+                  h('button', {
+                    type: 'button',
+                    onClick: () => fileInputRef.current?.click(),
+                    style: { ...t.btnGhost, padding: '0.35rem 0.7rem', fontSize: '0.8rem', whiteSpace: 'nowrap' as const },
+                    disabled: uploading,
+                  }, uploading ? '⏳ Uploading…' : '📁 Upload'),
+                  h('button', {
+                    type: 'button',
+                    onClick: () => { loadMedia(); setShowMediaPicker(!showMediaPicker); },
+                    style: { ...t.btnGhost, padding: '0.35rem 0.7rem', fontSize: '0.8rem', whiteSpace: 'nowrap' as const },
+                  }, showMediaPicker ? 'Hide Library' : '🖼️ Library'),
+                  h('input', {
+                    type: 'url',
+                    value: mediaUrl,
+                    onChange: (e: any) => setMediaUrl(e.target.value),
+                    placeholder: '…or paste a URL',
+                    style: { ...t.input, flex: 1 },
+                  }),
+                ),
+
+                // Selected media thumbnails
+                selectedMediaIds.length > 0 && h('div', { className: 'flex flex-wrap gap-2' },
+                  ...selectedMediaIds.map((id: string) => {
+                    const item = mediaLibrary.find((m: any) => m.id === id);
+                    if (!item) return null;
+                    return h('div', {
+                      key: id,
+                      style: {
+                        position: 'relative' as const, width: '72px', height: '72px',
+                        borderRadius: '8px', overflow: 'hidden',
+                        border: '2px solid rgba(127,90,240,0.5)',
+                      },
+                    },
+                      item.mimeType?.startsWith('video/')
+                        ? h('div', {
+                            style: {
+                              width: '100%', height: '100%', background: 'rgba(0,0,0,0.4)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: 'white', fontSize: '1.2rem',
+                            },
+                          }, '🎥')
+                        : h('img', {
+                            src: item.thumbnailDataUrl || item.url,
+                            style: { width: '100%', height: '100%', objectFit: 'cover' as const },
+                          }),
+                      h('button', {
+                        type: 'button',
+                        onClick: () => toggleMediaSelect(id),
+                        style: {
+                          position: 'absolute' as const, top: '2px', right: '2px',
+                          background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+                          width: '18px', height: '18px', color: 'white', fontSize: '0.65rem',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          lineHeight: '1',
+                        },
+                      }, '✕'),
+                    );
+                  }),
+                ),
+
+                // Media library picker grid
+                showMediaPicker && h('div', {
+                  style: {
+                    background: 'rgba(255,255,255,0.02)', border: '1px solid var(--ck-border-subtle)',
+                    borderRadius: '10px', padding: '0.75rem', maxHeight: '260px', overflowY: 'auto' as const,
+                  },
+                },
+                  h('div', { className: 'text-xs font-medium mb-2', style: t.faint },
+                    `Media Library (${mediaLibrary.length} items)`
+                  ),
+                  mediaLibrary.length === 0
+                    ? h('div', { className: 'text-xs py-4 text-center', style: t.faint }, 'No media yet. Upload some files!')
+                    : h('div', {
+                        style: {
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
+                          gap: '0.5rem',
+                        },
+                      },
+                        ...mediaLibrary.map((item: any) => {
+                          const isSelected = selectedMediaIds.includes(item.id);
+                          return h('div', {
+                            key: item.id,
+                            onClick: () => toggleMediaSelect(item.id),
+                            style: {
+                              position: 'relative' as const, cursor: 'pointer',
+                              width: '100%', paddingTop: '100%', borderRadius: '8px',
+                              overflow: 'hidden',
+                              border: isSelected ? '2px solid rgba(127,90,240,0.7)' : '1px solid var(--ck-border-subtle)',
+                              boxShadow: isSelected ? '0 0 8px rgba(127,90,240,0.3)' : 'none',
+                            },
+                          },
+                            item.mimeType?.startsWith('video/')
+                              ? h('div', {
+                                  style: {
+                                    position: 'absolute' as const, inset: '0',
+                                    background: 'rgba(0,0,0,0.4)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    color: 'white', fontSize: '1.5rem',
+                                  },
+                                }, '🎥')
+                              : h('img', {
+                                  src: item.thumbnailDataUrl || item.url,
+                                  style: {
+                                    position: 'absolute' as const, inset: '0',
+                                    width: '100%', height: '100%', objectFit: 'cover' as const,
+                                  },
+                                }),
+                            isSelected && h('div', {
+                              style: {
+                                position: 'absolute' as const, top: '4px', right: '4px',
+                                background: 'rgba(127,90,240,0.85)', borderRadius: '50%',
+                                width: '20px', height: '20px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: 'white', fontSize: '0.7rem', fontWeight: '700',
+                              },
+                            }, '✓'),
+                            h('button', {
+                              type: 'button',
+                              onClick: (e: any) => { e.stopPropagation(); deleteMedia(item.id); },
+                              style: {
+                                position: 'absolute' as const, bottom: '4px', right: '4px',
+                                background: 'rgba(220,38,38,0.7)', border: 'none', borderRadius: '50%',
+                                width: '18px', height: '18px', color: 'white', fontSize: '0.6rem',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                opacity: '0.6', lineHeight: '1',
+                              },
+                              title: 'Delete from library',
+                            }, '🗑'),
+                            h('div', {
+                              style: {
+                                position: 'absolute' as const, bottom: '0', left: '0', right: '0',
+                                background: 'rgba(0,0,0,0.6)', padding: '2px 4px',
+                                fontSize: '0.55rem', color: 'rgba(255,255,255,0.8)',
+                                whiteSpace: 'nowrap' as const, overflow: 'hidden',
+                                textOverflow: 'ellipsis' as const,
+                              },
+                            }, item.filename),
+                          );
+                        }),
+                      ),
+                ),
               ),
             ),
 
@@ -501,9 +709,31 @@
                   },
                 }, 'Start writing to see a preview'),
 
-            // Media preview
-            mediaUrl && showMedia && h('div', { className: 'mt-3' },
-              h('img', {
+            // Media preview (selected library items + URL)
+            (selectedMediaIds.length > 0 || (mediaUrl && showMedia)) && h('div', { className: 'mt-3 space-y-2' },
+              ...selectedMediaIds.map((id: string) => {
+                const item = mediaLibrary.find((m: any) => m.id === id);
+                if (!item) return null;
+                return item.mimeType?.startsWith('video/')
+                  ? h('div', {
+                      key: id,
+                      style: {
+                        background: 'rgba(0,0,0,0.3)', borderRadius: '8px',
+                        border: '1px solid var(--ck-border-subtle)',
+                        padding: '1rem', textAlign: 'center' as const,
+                        color: 'var(--ck-text-secondary)', fontSize: '0.8rem',
+                      },
+                    }, `\ud83c\udfa5 ${item.filename}`)
+                  : h('img', {
+                      key: id,
+                      src: item.thumbnailDataUrl || item.url,
+                      style: {
+                        maxWidth: '100%', borderRadius: '8px',
+                        border: '1px solid var(--ck-border-subtle)',
+                      },
+                    });
+              }),
+              mediaUrl && showMedia && h('img', {
                 src: mediaUrl,
                 style: {
                   maxWidth: '100%', borderRadius: '8px',
