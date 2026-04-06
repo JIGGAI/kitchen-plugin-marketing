@@ -169,10 +169,19 @@
         }
 
         const res = await fetch(`${apiBase}/drivers?team=${encodeURIComponent(teamId)}`, { headers });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => `HTTP ${res.status}`);
+          setError(`Driver API error: ${res.status} — ${errText.slice(0, 200)}`);
+          return;
+        }
         const json = await res.json();
-        setDrivers(Array.isArray(json.drivers) ? json.drivers : []);
+        const list = Array.isArray(json.drivers) ? json.drivers : (json.data?.drivers || []);
+        setDrivers(list);
+        if (list.length === 0) {
+          setError('No platform drivers returned. The plugin handler may not be loaded — try restarting Kitchen.');
+        }
       } catch (e: any) {
-        setError(e?.message || 'Failed to load drivers');
+        setError(`Failed to load drivers: ${e?.message || 'unknown'}. Check browser console for details.`);
       }
     };
 
