@@ -148,14 +148,26 @@
       void detectAll();
     };
 
+    const getStoredPostiz = () => {
+      try {
+        const stored = localStorage.getItem(`ck-postiz-${teamId}`);
+        if (stored) return JSON.parse(stored) as { apiKey?: string; baseUrl?: string };
+      } catch { /* ignore */ }
+      return null;
+    };
+
     const detectAll = async () => {
       setDetecting(true);
       setError(null);
       try {
+        // Read directly from localStorage to avoid stale state on mount
+        const stored = getStoredPostiz();
+        const key = postizKey || stored?.apiKey || '';
+        const url = postizUrl || stored?.baseUrl || 'https://api.postiz.com/public/v1';
         const headers: Record<string, string> = {};
-        if (postizKey) {
-          headers['x-postiz-api-key'] = postizKey;
-          headers['x-postiz-base-url'] = postizUrl;
+        if (key) {
+          headers['x-postiz-api-key'] = key;
+          headers['x-postiz-base-url'] = url;
         }
 
         const res = await fetch(`${apiBase}/providers?team=${encodeURIComponent(teamId)}`, { headers });
