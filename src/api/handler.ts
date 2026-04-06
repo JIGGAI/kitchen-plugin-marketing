@@ -7,6 +7,7 @@ import type { KitchenPluginContext } from './types-kitchen';
 import { initializeDatabase, encryptCredentials, decryptCredentials } from '../db';
 import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
+import { getPostizIntegrations } from '../drivers/postiz-backend';
 import type {
   ApiError,
   PaginatedResponse,
@@ -53,7 +54,7 @@ function getUserId(req: PluginRequest): string {
 /*  Backend sources — build from request context                       */
 /* ================================================================== */
 
-function getBackendSources(req: PluginRequest, teamId: string): BackendSources {
+async function getBackendSources(req: PluginRequest, teamId: string): Promise<BackendSources> {
   const sources: BackendSources = {};
 
   // Postiz
@@ -129,6 +130,13 @@ function getBackendSources(req: PluginRequest, teamId: string): BackendSources {
     }));
   } catch { /* ignore */ }
 
+  // Pre-fetch Postiz integrations so createAllDrivers can create per-account drivers
+  if (sources.postiz) {
+    try {
+      sources._postizIntegrations = await getPostizIntegrations(sources.postiz);
+    } catch { /* ignore — drivers will fall back to lazy fetch */ }
+  }
+
   return sources;
 }
 
@@ -142,7 +150,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   // ---- /drivers (list all platform drivers with status) ----
   if (req.path === '/drivers' && req.method === 'GET') {
     try {
-      const sources = getBackendSources(req, teamId);
+      const sources = await getBackendSources(req, teamId);
       const drivers = createAllDrivers(sources);
 
       const results = await Promise.all(
@@ -168,7 +176,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   // ---- /drivers/:platform/status ----
   if (req.path.match(/^\/drivers\/([^/]+)\/status$/) && req.method === 'GET') {
     const platform = req.path.split('/')[2];
-    const sources = getBackendSources(req, teamId);
+    const sources = await getBackendSources(req, teamId);
     const driver = createDriver(platform, {
       postiz: sources.postiz,
       gateway: sources.gatewayChannels?.includes(platform) ? { channel: platform } : undefined,
@@ -188,6 +196,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       platforms: string[];
       mediaUrls?: string[];
       scheduledAt?: string;
+      integrationId?: string; // optional: target a specific Postiz integration
       settings?: Record<string, Record<string, unknown>>; // per-platform settings
     };
 
@@ -195,15 +204,23 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       return apiError(400, 'VALIDATION_ERROR', 'content and platforms[] are required');
     }
 
-    const sources = getBackendSources(req, teamId);
-    const results: Array<{ platform: string; success: boolean; postId?: string; error?: string; backend?: string }> = [];
+    const sources = await getBackendSources(req, teamId);
+    const results: Array<{ platform: string; success: boolean; postId?: string; error?: string; backend?: string; integrationId?: string }> = [];
 
     for (const platform of body.platforms) {
-      const driver = createDriver(platform, {
-        postiz: sources.postiz,
+      // If caller pinned an integrationId, create a driver that targets it directly
+      let driverConfig: import('../drivers').DriverConfig = {
+        postiz: sources.postiz
+          ? {
+              apiKey: sources.postiz.apiKey,
+              baseUrl: sources.postiz.baseUrl,
+              integrationId: body.integrationId || undefined,
+            }
+          : undefined,
         gateway: sources.gatewayChannels?.includes(platform) ? { channel: platform } : undefined,
         direct: sources.storedAccounts?.find((a) => a.platform === platform)?.credentials as any,
-      });
+      };
+      const driver = createDriver(platform, driverConfig);
 
       if (!driver) {
         results.push({ platform, success: false, error: `No driver for ${platform}` });
@@ -230,6 +247,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         postId: result.postId,
         error: result.error,
         backend: status.backend,
+        integrationId: status.integrationId,
       });
     }
 
@@ -239,7 +257,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
 
   // ---- /platforms (list available platforms) ----
   if (req.path === '/platforms' && req.method === 'GET') {
-    const sources = getBackendSources(req, teamId);
+    const sources = await getBackendSources(req, teamId);
     const drivers = createAllDrivers(sources);
     const platforms = drivers.map((d) => ({
       platform: d.platform,
@@ -253,7 +271,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   // ---- LEGACY /providers (keep for backward compat) ----
   if (req.path === '/providers' && req.method === 'GET') {
     try {
-      const sources = getBackendSources(req, teamId);
+      const sources = await getBackendSources(req, teamId);
       const drivers = createAllDrivers(sources);
       const providers = await Promise.all(
         drivers.map(async (d) => {

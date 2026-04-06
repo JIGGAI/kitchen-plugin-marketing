@@ -1,6 +1,6 @@
 {
   "name": "@jiggai/kitchen-plugin-marketing",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "Marketing Suite plugin for ClawKitchen",
   "main": "dist/index.js",
   "files": [

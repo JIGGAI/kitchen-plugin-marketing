@@ -49,9 +49,29 @@ export abstract class BaseDriver implements PostingDriver {
     // Try Postiz first
     if (this.config.postiz) {
       try {
-        const integrations = await getPostizIntegrations(this.config.postiz);
-        // Match on identifier field — Postiz uses compound identifiers like
-        // 'instagram-standalone', 'facebook', 'x', etc.
+        // If a specific integrationId is pinned (from createAllDrivers),
+        // resolve details for just that integration.
+        if (this.config.postiz.integrationId) {
+          const integrations = await getPostizIntegrations(this.config.postiz);
+          const pinned = integrations.find(i => i.id === this.config.postiz!.integrationId);
+          if (pinned && !pinned.disabled) {
+            this._postizIntegrationId = pinned.id;
+            this._postizIdentifier = (pinned.identifier || pinned.providerIdentifier || this.postizProvider).toLowerCase();
+            this._statusCache = {
+              connected: true,
+              backend: 'postiz',
+              displayName: pinned.name || `${this.label} (Postiz)`,
+              username: pinned.profile || pinned.username,
+              avatar: pinned.picture,
+              integrationId: pinned.id,
+            };
+            return this._statusCache;
+          }
+        }
+        // Otherwise scan for first matching integration by platform
+        const integrations = this.config.postiz.integrationId
+          ? [] // already tried above
+          : await getPostizIntegrations(this.config.postiz);
         const match = integrations.find(
           (i) => {
             const id = (i.identifier || i.providerIdentifier || '').toLowerCase();
@@ -60,7 +80,7 @@ export abstract class BaseDriver implements PostingDriver {
           }
         );
         if (match) {
-          this._postizIntegrationId = this.config.postiz.integrationId || match.id;
+          this._postizIntegrationId = match.id;
           this._postizIdentifier = (match.identifier || match.providerIdentifier || this.postizProvider).toLowerCase();
           this._statusCache = {
             connected: true,
