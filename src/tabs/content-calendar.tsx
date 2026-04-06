@@ -411,6 +411,13 @@
         if (!res.ok) throw new Error(`Save failed (${res.status})`);
         setModalSuccess('Saved!');
         await loadPosts();
+        // Reset all fields so the modal is clean for next post
+        setModalContent('');
+        setModalPlatforms([]);
+        setModalMediaUrl('');
+        setModalShowMedia(false);
+        setModalSelectedMediaIds([]);
+        setModalMediaLibrary([]);
         setTimeout(() => { setModalOpen(false); setModalSuccess(null); }, 800);
       } catch (e: any) {
         setModalError(e?.message || 'Failed to save');
@@ -456,6 +463,13 @@
         }).catch(() => {});
         setModalSuccess(modalDate ? 'Scheduled!' : 'Published!');
         await loadPosts();
+        // Reset all fields
+        setModalContent('');
+        setModalPlatforms([]);
+        setModalMediaUrl('');
+        setModalShowMedia(false);
+        setModalSelectedMediaIds([]);
+        setModalMediaLibrary([]);
         setTimeout(() => { setModalOpen(false); setModalSuccess(null); }, 1000);
       } catch (e: any) {
         setModalError(e?.message || 'Publish failed');
