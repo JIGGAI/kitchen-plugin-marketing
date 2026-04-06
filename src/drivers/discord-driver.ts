@@ -9,13 +9,30 @@ export class DiscordDriver extends BaseDriver {
 
   protected getMaxLength() { return 2000; }
 
-  /** Discord posting via OpenClaw gateway message tool */
   protected async publishViaGateway(content: PostContent): Promise<PostResult> {
-    // Gateway driver posts via the Kitchen proxy → OpenClaw message tool
-    // The actual send happens server-side; we store intent and let the scheduler handle it
-    return {
-      success: false,
-      error: 'Gateway publishing requires OpenClaw message routing — use the scheduler or workflow',
-    };
+    if (content.scheduledAt) {
+      return {
+        success: false,
+        error: 'Scheduling via gateway not supported — save as draft and use a workflow or cron to post later',
+      };
+    }
+    try {
+      const resp = await fetch('/api/openclaw/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'send',
+          channel: 'discord',
+          message: content.text,
+        }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        return { success: false, error: data?.error || `Gateway returned ${resp.status}` };
+      }
+      return { success: true, postId: `gw-discord-${Date.now()}` };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Gateway request failed' };
+    }
   }
 }

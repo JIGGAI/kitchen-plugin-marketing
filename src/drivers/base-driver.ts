@@ -121,6 +121,10 @@ export abstract class BaseDriver implements PostingDriver {
     const cfg = this.config.postiz;
     if (!cfg) return { success: false, error: 'Postiz not configured' };
 
+    // Ensure integration ID is resolved (getStatus populates it)
+    if (!this._postizIntegrationId) {
+      await this.getStatus();
+    }
     const integrationId = this._postizIntegrationId || cfg.integrationId;
     if (!integrationId) return { success: false, error: 'No Postiz integration found for ' + this.platform };
 

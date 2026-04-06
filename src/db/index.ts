@@ -3,11 +3,19 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { createHash, createCipher, createDecipher } from 'crypto';
+import { existsSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { homedir } from 'os';
+
+// Resolve the plugin package root (where db/migrations/ lives)
+const PLUGIN_ROOT = dirname(dirname(__dirname)); // dist/db/index.js → plugin root
 
 // Database connection with team isolation
 export function createDatabase(teamId: string) {
-  const dbPath = process.env.KITCHEN_PLUGIN_DB_PATH || './data';
-  const teamDbFile = `${dbPath}/marketing-${teamId}.db`;
+  const dbPath = process.env.KITCHEN_PLUGIN_DB_PATH
+    || join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing');
+  if (!existsSync(dbPath)) mkdirSync(dbPath, { recursive: true });
+  const teamDbFile = join(dbPath, `marketing-${teamId}.db`);
   
   const sqlite = new Database(teamDbFile);
   const db = drizzle(sqlite, { schema });
@@ -43,11 +51,12 @@ export function decryptCredentials(encryptedData: Buffer): object {
 export function initializeDatabase(teamId: string) {
   const { db, sqlite } = createDatabase(teamId);
   
-  // Run migrations if needed
+  // Run migrations — resolve relative to the plugin package, not CWD
   try {
-    migrate(db, { migrationsFolder: './db/migrations' });
-  } catch (error) {
-    console.warn('Migration warning:', error.message);
+    const migrationsDir = join(PLUGIN_ROOT, 'db', 'migrations');
+    migrate(db, { migrationsFolder: migrationsDir });
+  } catch (error: any) {
+    console.warn('Migration warning:', error?.message);
   }
   
   return { db, sqlite };

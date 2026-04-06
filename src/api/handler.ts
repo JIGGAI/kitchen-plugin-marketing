@@ -1,5 +1,8 @@
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import type { KitchenPluginContext } from './types-kitchen';
 import { initializeDatabase, encryptCredentials, decryptCredentials } from '../db';
 import * as schema from '../db/schema';
@@ -62,12 +65,14 @@ function getBackendSources(req: PluginRequest, teamId: string): BackendSources {
 
   // Gateway channels
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const os = require('os');
-    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-    if (fs.existsSync(configPath)) {
-      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const configPath = join(homedir(), '.openclaw', 'openclaw.json');
+    // Also try json5 variant
+    const configPath5 = join(homedir(), '.openclaw', 'openclaw.json5');
+    const actualPath = existsSync(configPath) ? configPath : existsSync(configPath5) ? configPath5 : null;
+    if (actualPath) {
+      // Strip json5 comments for safe parsing
+      const raw = readFileSync(actualPath, 'utf8').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      const cfg = JSON.parse(raw);
       const plugins = cfg?.plugins?.entries || {};
       const channels: string[] = [];
       if (plugins.discord?.enabled) channels.push('discord');
