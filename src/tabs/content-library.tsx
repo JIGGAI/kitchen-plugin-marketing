@@ -1,5 +1,5 @@
 /**
- * Content Library Tab — compose, save drafts, publish via Postiz
+ * Content Library Tab — compose, save drafts, publish via driver system
  */
 (function () {
   const R = (window as any).React;
@@ -9,6 +9,7 @@
   const useMemo = R.useMemo as typeof R.useMemo;
   const useState = R.useState as typeof R.useState;
   const useCallback = R.useCallback as typeof R.useCallback;
+  const useRef = R.useRef as typeof R.useRef;
 
   const t = {
     text: { color: 'var(--ck-text-primary)' },
@@ -55,15 +56,16 @@
       fontWeight: 700,
       cursor: 'pointer',
     },
-    pill: (active: boolean) => ({
+    pill: (active: boolean, connected: boolean) => ({
       background: active ? 'rgba(99,179,237,0.16)' : 'rgba(255,255,255,0.03)',
       border: `1px solid ${active ? 'rgba(99,179,237,0.45)' : 'var(--ck-border-subtle)'}`,
       borderRadius: '999px',
       padding: '0.25rem 0.55rem',
       fontSize: '0.8rem',
-      color: active ? 'rgba(210,235,255,0.95)' : 'var(--ck-text-secondary)',
-      cursor: 'pointer',
+      color: active ? 'rgba(210,235,255,0.95)' : connected ? 'var(--ck-text-secondary)' : 'var(--ck-text-tertiary)',
+      cursor: connected ? 'pointer' : 'default',
       userSelect: 'none' as const,
+      opacity: connected ? 1 : 0.5,
     }),
     statusBadge: (status: string) => {
       const colors: Record<string, string> = {
@@ -82,6 +84,46 @@
         color: 'white',
       };
     },
+    backendBadge: (backend: string) => {
+      const colors: Record<string, string> = {
+        postiz: 'rgba(99,179,237,0.5)',
+        gateway: 'rgba(134,239,172,0.5)',
+        direct: 'rgba(251,191,36,0.5)',
+      };
+      return {
+        display: 'inline-block',
+        background: colors[backend] || 'rgba(100,100,100,0.3)',
+        borderRadius: '999px',
+        padding: '0.05rem 0.35rem',
+        fontSize: '0.6rem',
+        fontWeight: 600,
+        color: 'white',
+        marginLeft: '0.25rem',
+      };
+    },
+    charWarn: (pct: number) => ({
+      color: pct > 100 ? 'rgba(248,113,113,0.95)' : pct > 90 ? 'rgba(251,191,36,0.9)' : 'var(--ck-text-tertiary)',
+      fontSize: '0.75rem',
+    }),
+  };
+
+  type DriverInfo = {
+    platform: string;
+    label: string;
+    icon: string;
+    connected: boolean;
+    backend: string;
+    displayName: string;
+    username?: string;
+    avatar?: string;
+    integrationId?: string;
+    capabilities: {
+      canPost: boolean;
+      canSchedule: boolean;
+      canDelete: boolean;
+      canUploadMedia: boolean;
+      maxLength?: number;
+    };
   };
 
   type Post = {
@@ -94,31 +136,26 @@
     createdAt: string;
   };
 
-  type Provider = {
-    id: string;
-    type: string;
-    platform: string;
-    displayName: string;
-    isActive: boolean;
-    capabilities: string[];
-    meta?: Record<string, unknown>;
-  };
-
   function ContentLibrary(props: any) {
     const teamId = String(props?.teamId || 'default');
     const apiBase = useMemo(() => `/api/plugins/marketing`, []);
 
+    const [drivers, setDrivers] = useState<DriverInfo[]>([]);
     const [posts, setPosts] = useState<Post[]>([]);
-    const [providers, setProviders] = useState<Provider[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
+    const [filterStatus, setFilterStatus] = useState<string>('all');
 
     const [content, setContent] = useState('');
-    const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
+    const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
     const [scheduledAt, setScheduledAt] = useState('');
+    const [mediaUrl, setMediaUrl] = useState('');
+    const [showMedia, setShowMedia] = useState(false);
+
+    const successTimeout = useRef<any>(null);
 
     const postizHeaders = useMemo(() => {
       try {
@@ -136,32 +173,56 @@
       return {};
     }, [teamId]);
 
+    const loadDrivers = useCallback(async () => {
+      try {
+        const res = await fetch(`${apiBase}/drivers?team=${encodeURIComponent(teamId)}`, { headers: postizHeaders });
+        const json = await res.json();
+        setDrivers(Array.isArray(json.drivers) ? json.drivers : []);
+      } catch { /* ignore */ }
+    }, [apiBase, teamId, postizHeaders]);
+
     const loadPosts = useCallback(async () => {
       try {
-        const res = await fetch(`${apiBase}/posts?team=${encodeURIComponent(teamId)}&limit=25`);
+        const url = `${apiBase}/posts?team=${encodeURIComponent(teamId)}&limit=50`;
+        const res = await fetch(url);
         const json = await res.json();
         setPosts(Array.isArray(json.data) ? json.data : []);
       } catch { /* ignore */ }
     }, [apiBase, teamId]);
 
-    const loadProviders = useCallback(async () => {
-      try {
-        const res = await fetch(`${apiBase}/providers?team=${encodeURIComponent(teamId)}`, { headers: postizHeaders });
-        const json = await res.json();
-        const detected = Array.isArray(json.providers) ? json.providers : [];
-        setProviders(detected);
-      } catch { /* ignore */ }
-    }, [apiBase, teamId, postizHeaders]);
-
     useEffect(() => {
       setLoading(true);
-      Promise.all([loadPosts(), loadProviders()]).finally(() => setLoading(false));
-    }, [loadPosts, loadProviders]);
+      Promise.all([loadDrivers(), loadPosts()]).finally(() => setLoading(false));
+    }, [loadDrivers, loadPosts]);
 
-    const toggleProvider = (id: string) => {
-      setSelectedProviders((prev: string[]) =>
-        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    const connectedDrivers = useMemo(() => drivers.filter((d) => d.connected), [drivers]);
+    const disconnectedDrivers = useMemo(() => drivers.filter((d) => !d.connected), [drivers]);
+
+    const togglePlatform = (platform: string) => {
+      const driver = drivers.find((d) => d.platform === platform);
+      if (!driver?.connected) return;
+      setSelectedPlatforms((prev: string[]) =>
+        prev.includes(platform) ? prev.filter((x) => x !== platform) : [...prev, platform]
       );
+    };
+
+    // Character limit — show strictest of selected platforms
+    const charLimit = useMemo(() => {
+      if (selectedPlatforms.length === 0) return undefined;
+      const limits = selectedPlatforms
+        .map((p) => drivers.find((d) => d.platform === p)?.capabilities?.maxLength)
+        .filter((l): l is number => l !== undefined);
+      return limits.length > 0 ? Math.min(...limits) : undefined;
+    }, [selectedPlatforms, drivers]);
+
+    const canSchedule = useMemo(() => {
+      return selectedPlatforms.some((p) => drivers.find((d) => d.platform === p)?.capabilities?.canSchedule);
+    }, [selectedPlatforms, drivers]);
+
+    const showSuccess = (msg: string) => {
+      setSuccess(msg);
+      if (successTimeout.current) clearTimeout(successTimeout.current);
+      successTimeout.current = setTimeout(() => setSuccess(null), 5000);
     };
 
     // Save as local draft
@@ -170,15 +231,13 @@
       setSaving(true);
       setError(null);
       try {
-        const platforms = selectedProviders
-          .map((id) => providers.find((p) => p.id === id)?.platform)
-          .filter(Boolean);
+        const platforms = selectedPlatforms.length > 0 ? selectedPlatforms : ['draft'];
         const res = await fetch(`${apiBase}/posts?team=${encodeURIComponent(teamId)}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             content,
-            platforms: platforms.length > 0 ? platforms : ['draft'],
+            platforms,
             status: scheduledAt ? 'scheduled' : 'draft',
             scheduledAt: scheduledAt || undefined,
           }),
@@ -186,7 +245,9 @@
         if (!res.ok) throw new Error(`Save failed (${res.status})`);
         setContent('');
         setScheduledAt('');
-        setSelectedProviders([]);
+        setSelectedPlatforms([]);
+        setMediaUrl('');
+        showSuccess('Draft saved!');
         await loadPosts();
       } catch (e: any) {
         setError(e?.message || 'Failed to save');
@@ -195,50 +256,62 @@
       }
     };
 
-    // Publish via Postiz
+    // Publish via unified driver system
     const onPublish = async () => {
-      if (!content.trim() || selectedProviders.length === 0) return;
+      if (!content.trim() || selectedPlatforms.length === 0) return;
       setPublishing(true);
       setError(null);
       setSuccess(null);
 
-      const postizProviders = selectedProviders.filter((id) => id.startsWith('postiz:'));
-      const gatewayProviders = selectedProviders.filter((id) => id.startsWith('gateway:'));
-
       try {
-        // Publish to Postiz
-        if (postizProviders.length > 0) {
-          const integrationIds = postizProviders.map((id) => {
-            const prov = providers.find((p) => p.id === id);
-            return prov?.meta?.postizId as string;
-          }).filter(Boolean);
+        const res = await fetch(`${apiBase}/publish?team=${encodeURIComponent(teamId)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...postizHeaders },
+          body: JSON.stringify({
+            content,
+            platforms: selectedPlatforms,
+            scheduledAt: scheduledAt || undefined,
+            mediaUrls: mediaUrl ? [mediaUrl] : undefined,
+          }),
+        });
+        const json = await res.json();
 
-          const res = await fetch(`${apiBase}/publish?team=${encodeURIComponent(teamId)}`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', ...postizHeaders },
-            body: JSON.stringify({
-              content,
-              integrationIds,
-              scheduledAt: scheduledAt || undefined,
-            }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => null);
-            throw new Error(err?.message || `Postiz publish failed (${res.status})`);
+        if (json.results) {
+          const succeeded = json.results.filter((r: any) => r.success);
+          const failed = json.results.filter((r: any) => !r.success);
+
+          if (failed.length > 0 && succeeded.length === 0) {
+            throw new Error(failed.map((f: any) => `${f.platform}: ${f.error}`).join('; '));
           }
+
+          const parts: string[] = [];
+          if (succeeded.length > 0) {
+            parts.push(`${scheduledAt ? 'Scheduled' : 'Published'} to ${succeeded.map((s: any) => s.platform).join(', ')}`);
+          }
+          if (failed.length > 0) {
+            parts.push(`Failed: ${failed.map((f: any) => `${f.platform} (${f.error})`).join(', ')}`);
+          }
+          showSuccess(parts.join(' · '));
+        } else {
+          showSuccess(scheduledAt ? 'Scheduled!' : 'Published!');
         }
 
-        // Gateway channels — these would use the OpenClaw message tool
-        // For now, note them as needing manual posting
-        if (gatewayProviders.length > 0 && postizProviders.length === 0) {
-          setSuccess('Saved! Gateway posting requires OpenClaw agent — use the workflow or ask your assistant to post.');
-        } else {
-          setSuccess(scheduledAt ? 'Scheduled via Postiz!' : 'Published via Postiz!');
-        }
+        // Also save as local record
+        await fetch(`${apiBase}/posts?team=${encodeURIComponent(teamId)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            content,
+            platforms: selectedPlatforms,
+            status: scheduledAt ? 'scheduled' : 'published',
+            scheduledAt: scheduledAt || undefined,
+          }),
+        }).catch(() => {});
 
         setContent('');
         setScheduledAt('');
-        setSelectedProviders([]);
+        setSelectedPlatforms([]);
+        setMediaUrl('');
         await loadPosts();
       } catch (e: any) {
         setError(e?.message || 'Publish failed');
@@ -247,8 +320,13 @@
       }
     };
 
-    const postizAvailable = providers.some((p) => p.type === 'postiz');
-    const hasSelection = selectedProviders.length > 0;
+    const hasConnected = connectedDrivers.length > 0;
+    const hasSelection = selectedPlatforms.length > 0;
+
+    const filteredPosts = useMemo(() => {
+      if (filterStatus === 'all') return posts;
+      return posts.filter((p) => p.status === filterStatus);
+    }, [posts, filterStatus]);
 
     return h('div', { className: 'space-y-3' },
 
@@ -262,47 +340,86 @@
             onChange: (e: any) => setContent(e.target.value),
             placeholder: 'Write your post…',
             rows: 5,
-            style: { ...t.input, resize: 'vertical' as const, minHeight: '110px' },
+            style: { ...t.input, resize: 'vertical' as const, minHeight: '110px', fontFamily: 'inherit' },
           }),
 
-          // Provider selector
-          providers.length > 0 && h('div', null,
+          // Character count
+          charLimit && content.length > 0 && h('div', { style: t.charWarn((content.length / charLimit) * 100) },
+            `${content.length} / ${charLimit} characters`,
+            content.length > charLimit && ' ⚠ over limit'
+          ),
+          !charLimit && content.length > 0 && h('div', { className: 'text-xs', style: t.faint }, `${content.length} chars`),
+
+          // Platform selector — connected
+          h('div', null,
             h('div', { className: 'text-xs font-medium mb-2', style: t.faint }, 'Publish to'),
-            h('div', { className: 'flex flex-wrap gap-2' },
-              ...providers.filter((p) => p.isActive).map((p) =>
-                h('span', {
-                  key: p.id,
-                  onClick: () => toggleProvider(p.id),
-                  style: t.pill(selectedProviders.includes(p.id)),
-                  role: 'button',
-                  tabIndex: 0,
-                },
-                  `${p.displayName}`
+            connectedDrivers.length > 0
+              ? h('div', { className: 'flex flex-wrap gap-2' },
+                  ...connectedDrivers.map((d) =>
+                    h('span', {
+                      key: d.platform,
+                      onClick: () => togglePlatform(d.platform),
+                      style: t.pill(selectedPlatforms.includes(d.platform), true),
+                      role: 'button',
+                      tabIndex: 0,
+                      title: `${d.displayName} via ${d.backend}`,
+                    },
+                      `${d.icon} ${d.label}`,
+                      h('span', { style: t.backendBadge(d.backend) }, d.backend),
+                    )
+                  ),
+                  // Show disconnected as disabled
+                  ...disconnectedDrivers.map((d) =>
+                    h('span', {
+                      key: d.platform,
+                      style: t.pill(false, false),
+                      title: `${d.label} — not connected`,
+                    }, `${d.icon} ${d.label}`)
+                  ),
                 )
-              ),
+              : h('div', { className: 'flex flex-wrap gap-2' },
+                  ...drivers.map((d) =>
+                    h('span', { key: d.platform, style: t.pill(false, false), title: 'Not connected' },
+                      `${d.icon} ${d.label}`
+                    )
+                  ),
+                  h('div', { className: 'text-xs mt-1', style: t.faint },
+                    'No platforms connected. Go to Accounts tab to set up Postiz or add accounts.'
+                  ),
+                ),
+          ),
+
+          // Media URL (collapsible)
+          h('div', null,
+            h('button', {
+              type: 'button',
+              onClick: () => setShowMedia(!showMedia),
+              style: { ...t.btnGhost, padding: '0.3rem 0.55rem', fontSize: '0.8rem' },
+            }, showMedia ? '− Media' : '+ Media'),
+            showMedia && h('div', { className: 'mt-2' },
+              h('input', {
+                type: 'url',
+                value: mediaUrl,
+                onChange: (e: any) => setMediaUrl(e.target.value),
+                placeholder: 'Paste image or video URL…',
+                style: t.input,
+              }),
             ),
           ),
 
-          // No providers hint
-          providers.length === 0 && !loading && h('div', { className: 'text-xs', style: t.faint },
-            'No publishing targets detected. Go to Accounts tab to connect Postiz or add accounts.'
-          ),
-
-          // Schedule
-          h('div', { className: 'grid grid-cols-1 gap-2 sm:grid-cols-2' },
+          // Schedule (only if any selected platform supports it)
+          (canSchedule || !hasSelection) && h('div', { className: 'grid grid-cols-1 gap-2 sm:grid-cols-2' },
             h('div', null,
-              h('div', { className: 'text-xs font-medium mb-1', style: t.faint }, 'Schedule (optional)'),
+              h('div', { className: 'text-xs font-medium mb-1', style: t.faint },
+                canSchedule ? 'Schedule (optional)' : 'Schedule (connect Postiz for scheduling)'
+              ),
               h('input', {
                 type: 'datetime-local',
                 value: scheduledAt,
                 onChange: (e: any) => setScheduledAt(e.target.value),
-                style: t.input,
+                style: { ...t.input, opacity: canSchedule || !hasSelection ? 1 : 0.5 },
+                disabled: hasSelection && !canSchedule,
               }),
-            ),
-            h('div', { className: 'flex items-end' },
-              h('div', { className: 'text-xs', style: t.faint },
-                content.length > 0 ? `${content.length} chars` : ''
-              ),
             ),
           ),
 
@@ -315,16 +432,12 @@
               disabled: saving || !content.trim(),
             }, saving ? 'Saving…' : 'Save draft'),
 
-            postizAvailable && hasSelection && h('button', {
+            hasConnected && hasSelection && h('button', {
               type: 'button',
               onClick: () => void onPublish(),
               style: { ...t.btnPublish, opacity: publishing ? 0.7 : 1 },
               disabled: publishing || !content.trim(),
-            }, publishing ? 'Publishing…' : (scheduledAt ? '⏱ Schedule' : '📤 Publish')),
-
-            !postizAvailable && hasSelection && h('div', { className: 'text-xs', style: t.faint },
-              'Connect Postiz on Accounts tab to publish directly.'
-            ),
+            }, publishing ? 'Publishing…' : (scheduledAt ? '⏱ Schedule' : '📤 Publish now')),
           ),
 
           error && h('div', { className: 'text-xs', style: { color: 'rgba(248,113,113,0.95)' } }, error),
@@ -334,16 +447,34 @@
 
       // ---- Posts list ----
       h('div', { style: t.card },
-        h('div', { className: 'flex items-center justify-between mb-2' },
+        h('div', { className: 'flex items-center justify-between mb-3' },
           h('div', { className: 'text-sm font-medium', style: t.text }, 'Posts'),
-          h('button', { type: 'button', onClick: () => void loadPosts(), style: t.btnGhost, className: 'text-xs' }, '↻'),
+          h('div', { className: 'flex items-center gap-2' },
+            ...['all', 'draft', 'scheduled', 'published', 'failed'].map((s) =>
+              h('button', {
+                key: s,
+                type: 'button',
+                onClick: () => setFilterStatus(s),
+                style: {
+                  ...t.btnGhost,
+                  padding: '0.2rem 0.45rem',
+                  fontSize: '0.7rem',
+                  background: filterStatus === s ? 'rgba(99,179,237,0.12)' : undefined,
+                  borderColor: filterStatus === s ? 'rgba(99,179,237,0.35)' : undefined,
+                },
+              }, s)
+            ),
+            h('button', { type: 'button', onClick: () => void loadPosts(), style: { ...t.btnGhost, padding: '0.2rem 0.45rem', fontSize: '0.7rem' } }, '↻'),
+          ),
         ),
         loading
           ? h('div', { className: 'py-6 text-center text-sm', style: t.faint }, 'Loading…')
-          : posts.length === 0
-            ? h('div', { className: 'py-6 text-center text-sm', style: t.faint }, 'No posts yet.')
+          : filteredPosts.length === 0
+            ? h('div', { className: 'py-6 text-center text-sm', style: t.faint },
+                filterStatus === 'all' ? 'No posts yet. Compose your first post above!' : `No ${filterStatus} posts.`
+              )
             : h('div', { className: 'space-y-2' },
-              ...posts.map((p) =>
+              ...filteredPosts.map((p) =>
                 h('div', { key: p.id, style: { ...t.card, padding: '0.75rem' } },
                   h('div', { className: 'flex items-center justify-between gap-2' },
                     h('div', { className: 'flex items-center gap-2' },
@@ -352,9 +483,17 @@
                     ),
                     p.scheduledAt && h('div', { className: 'text-xs', style: t.muted }, `⏱ ${new Date(p.scheduledAt).toLocaleString()}`),
                   ),
-                  h('div', { className: 'mt-2 whitespace-pre-wrap text-sm', style: t.text }, p.content),
+                  h('div', {
+                    className: 'mt-2 whitespace-pre-wrap text-sm',
+                    style: { ...t.text, maxHeight: '120px', overflow: 'hidden', textOverflow: 'ellipsis' },
+                  }, p.content),
                   p.platforms?.length > 0 && h('div', { className: 'mt-2 flex flex-wrap gap-1' },
-                    ...p.platforms.map((pl) => h('span', { key: pl, style: t.pill(true) }, pl)),
+                    ...p.platforms.map((pl) => {
+                      const driver = drivers.find((d) => d.platform === pl);
+                      return h('span', { key: pl, style: t.pill(true, true) },
+                        driver ? `${driver.icon} ${pl}` : pl
+                      );
+                    }),
                   ),
                 )
               )

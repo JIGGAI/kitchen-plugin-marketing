@@ -1,5 +1,5 @@
 /**
- * Accounts Tab — auto-detects providers (Postiz, Gateway channels, manual)
+ * Accounts Tab — driver-based platform connections
  */
 (function () {
   const R = (window as any).React;
@@ -56,44 +56,48 @@
       fontWeight: 600,
       color: 'white',
     }),
+    capPill: (active: boolean) => ({
+      display: 'inline-block',
+      background: active ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.03)',
+      border: `1px solid ${active ? 'rgba(99,179,237,0.3)' : 'var(--ck-border-subtle)'}`,
+      borderRadius: '999px',
+      padding: '0.1rem 0.4rem',
+      fontSize: '0.6rem',
+      color: active ? 'rgba(210,235,255,0.9)' : 'var(--ck-text-tertiary)',
+    }),
   };
 
-  const PLATFORM_ICONS: Record<string, string> = {
-    x: '𝕏',
-    twitter: '𝕏',
-    instagram: '📷',
-    linkedin: '💼',
-    facebook: '📘',
-    youtube: '▶️',
-    tiktok: '🎵',
-    bluesky: '🦋',
-    mastodon: '🐘',
-    reddit: '🤖',
-    discord: '💬',
-    telegram: '✈️',
-    pinterest: '📌',
-    threads: '🧵',
-    medium: '✍️',
-    wordpress: '📝',
-  };
-
-  const TYPE_COLORS: Record<string, string> = {
+  const BACKEND_COLORS: Record<string, string> = {
     postiz: 'rgba(99,179,237,0.7)',
     gateway: 'rgba(134,239,172,0.7)',
-    skill: 'rgba(251,191,36,0.7)',
-    manual: 'rgba(167,139,250,0.7)',
+    direct: 'rgba(251,191,36,0.7)',
+    none: 'rgba(100,100,100,0.5)',
   };
 
-  type Provider = {
-    id: string;
-    type: string;
+  const BACKEND_LABELS: Record<string, string> = {
+    postiz: 'Postiz',
+    gateway: 'OpenClaw',
+    direct: 'Direct API',
+    none: 'Not connected',
+  };
+
+  type DriverInfo = {
     platform: string;
+    label: string;
+    icon: string;
+    connected: boolean;
+    backend: string;
     displayName: string;
     username?: string;
     avatar?: string;
-    isActive: boolean;
-    capabilities: string[];
-    meta?: Record<string, unknown>;
+    integrationId?: string;
+    capabilities: {
+      canPost: boolean;
+      canSchedule: boolean;
+      canDelete: boolean;
+      canUploadMedia: boolean;
+      maxLength?: number;
+    };
   };
 
   type ManualAccount = {
@@ -109,10 +113,9 @@
     const teamId = String(props?.teamId || 'default');
     const apiBase = useMemo(() => `/api/plugins/marketing`, []);
 
-    const [providers, setProviders] = useState<Provider[]>([]);
+    const [drivers, setDrivers] = useState<DriverInfo[]>([]);
     const [manualAccounts, setManualAccounts] = useState<ManualAccount[]>([]);
     const [loading, setLoading] = useState(true);
-    const [detecting, setDetecting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     // Postiz config
@@ -122,31 +125,11 @@
 
     // Manual account form
     const [showManual, setShowManual] = useState(false);
-    const [manPlatform, setManPlatform] = useState('twitter');
+    const [manPlatform, setManPlatform] = useState('x');
     const [manName, setManName] = useState('');
     const [manUser, setManUser] = useState('');
     const [manToken, setManToken] = useState('');
     const [saving, setSaving] = useState(false);
-
-    // Load postiz key from localStorage
-    useEffect(() => {
-      try {
-        const stored = localStorage.getItem(`ck-postiz-${teamId}`);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setPostizKey(parsed.apiKey || '');
-          setPostizUrl(parsed.baseUrl || 'https://api.postiz.com/public/v1');
-        }
-      } catch { /* ignore */ }
-    }, [teamId]);
-
-    const savePostizConfig = () => {
-      try {
-        localStorage.setItem(`ck-postiz-${teamId}`, JSON.stringify({ apiKey: postizKey, baseUrl: postizUrl }));
-      } catch { /* ignore */ }
-      setShowPostizSetup(false);
-      void detectAll();
-    };
 
     const getStoredPostiz = () => {
       try {
@@ -156,11 +139,26 @@
       return null;
     };
 
-    const detectAll = async () => {
-      setDetecting(true);
+    // Load postiz key from localStorage
+    useEffect(() => {
+      const stored = getStoredPostiz();
+      if (stored) {
+        setPostizKey(stored.apiKey || '');
+        setPostizUrl(stored.baseUrl || 'https://api.postiz.com/public/v1');
+      }
+    }, [teamId]);
+
+    const savePostizConfig = () => {
+      try {
+        localStorage.setItem(`ck-postiz-${teamId}`, JSON.stringify({ apiKey: postizKey, baseUrl: postizUrl }));
+      } catch { /* ignore */ }
+      setShowPostizSetup(false);
+      void loadDrivers();
+    };
+
+    const loadDrivers = async () => {
       setError(null);
       try {
-        // Read directly from localStorage to avoid stale state on mount
         const stored = getStoredPostiz();
         const key = postizKey || stored?.apiKey || '';
         const url = postizUrl || stored?.baseUrl || 'https://api.postiz.com/public/v1';
@@ -170,13 +168,11 @@
           headers['x-postiz-base-url'] = url;
         }
 
-        const res = await fetch(`${apiBase}/providers?team=${encodeURIComponent(teamId)}`, { headers });
+        const res = await fetch(`${apiBase}/drivers?team=${encodeURIComponent(teamId)}`, { headers });
         const json = await res.json();
-        setProviders(Array.isArray(json.providers) ? json.providers : []);
+        setDrivers(Array.isArray(json.drivers) ? json.drivers : []);
       } catch (e: any) {
-        setError(e?.message || 'Failed to detect providers');
-      } finally {
-        setDetecting(false);
+        setError(e?.message || 'Failed to load drivers');
       }
     };
 
@@ -190,13 +186,12 @@
 
     const refresh = async () => {
       setLoading(true);
-      await Promise.all([detectAll(), loadManual()]);
+      await Promise.all([loadDrivers(), loadManual()]);
       setLoading(false);
     };
 
     useEffect(() => {
       void refresh();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [teamId]);
 
     const onManualConnect = async () => {
@@ -218,7 +213,7 @@
         setManName('');
         setManUser('');
         setManToken('');
-        await loadManual();
+        await Promise.all([loadDrivers(), loadManual()]);
       } catch (e: any) {
         setError(e?.message || 'Failed to connect');
       } finally {
@@ -226,38 +221,10 @@
       }
     };
 
-    const allProviders = useMemo(() => {
-      const combined: Provider[] = [...providers];
-      for (const ma of manualAccounts) {
-        combined.push({
-          id: `manual:${ma.id}`,
-          type: 'manual',
-          platform: ma.platform,
-          displayName: ma.displayName,
-          username: ma.username,
-          isActive: ma.isActive,
-          capabilities: ['post'],
-        });
-      }
-      return combined;
-    }, [providers, manualAccounts]);
-
-    const grouped = useMemo(() => {
-      const g: Record<string, Provider[]> = {};
-      for (const p of allProviders) {
-        const key = p.type;
-        if (!g[key]) g[key] = [];
-        g[key].push(p);
-      }
-      return g;
-    }, [allProviders]);
-
-    const typeLabels: Record<string, string> = {
-      postiz: 'Postiz',
-      gateway: 'OpenClaw Channels',
-      skill: 'Skills',
-      manual: 'Manual',
-    };
+    const connectedDrivers = useMemo(() => drivers.filter((d) => d.connected), [drivers]);
+    const disconnectedDrivers = useMemo(() => drivers.filter((d) => !d.connected), [drivers]);
+    const connectedCount = connectedDrivers.length;
+    const totalCount = drivers.length;
 
     return h('div', { className: 'space-y-3' },
 
@@ -265,19 +232,19 @@
       h('div', { style: t.card },
         h('div', { className: 'flex items-start justify-between gap-2' },
           h('div', null,
-            h('div', { className: 'text-sm font-medium', style: t.text }, 'Connected Accounts'),
+            h('div', { className: 'text-sm font-medium', style: t.text }, 'Platform Drivers'),
             h('div', { className: 'mt-1 text-xs', style: t.faint },
-              `${allProviders.length} provider${allProviders.length !== 1 ? 's' : ''} detected`
+              `${connectedCount}/${totalCount} platforms connected`
             ),
           ),
           h('div', { className: 'flex flex-wrap gap-2' },
-            h('button', { type: 'button', onClick: () => void refresh(), style: t.btnGhost, disabled: detecting },
-              detecting ? 'Detecting…' : '↻ Refresh'
+            h('button', { type: 'button', onClick: () => void refresh(), style: t.btnGhost, disabled: loading },
+              loading ? 'Loading…' : '↻ Refresh'
             ),
             h('button', { type: 'button', onClick: () => setShowPostizSetup(!showPostizSetup), style: t.btnGhost },
               postizKey ? '⚙ Postiz' : '+ Postiz'
             ),
-            h('button', { type: 'button', onClick: () => setShowManual(!showManual), style: t.btnGhost }, '+ Manual'),
+            h('button', { type: 'button', onClick: () => setShowManual(!showManual), style: t.btnGhost }, '+ Direct token'),
           ),
         ),
         error && h('div', { className: 'mt-2 text-xs', style: { color: 'rgba(248,113,113,0.95)' } }, error),
@@ -287,7 +254,7 @@
       showPostizSetup && h('div', { style: t.card },
         h('div', { className: 'text-sm font-medium mb-2', style: t.text }, 'Postiz Configuration'),
         h('div', { className: 'text-xs mb-3', style: t.faint },
-          'Connect Postiz to manage social accounts via their platform. Get your API key from Postiz Settings → Developers → Public API.'
+          'Postiz manages OAuth connections to social platforms. Get your API key from Postiz Settings → Developers → Public API.'
         ),
         h('div', { className: 'grid grid-cols-1 gap-2 sm:grid-cols-2' },
           h('div', null,
@@ -312,28 +279,24 @@
         ),
         h('div', { className: 'mt-3 flex gap-2' },
           h('button', { type: 'button', onClick: () => setShowPostizSetup(false), style: t.btnGhost }, 'Cancel'),
-          h('button', { type: 'button', onClick: savePostizConfig, style: t.btnPrimary }, postizKey ? 'Save & Detect' : 'Save'),
+          h('button', { type: 'button', onClick: savePostizConfig, style: t.btnPrimary }, 'Save & Detect'),
         ),
       ),
 
-      // ---- Manual account form ----
+      // ---- Manual token form ----
       showManual && h('div', { style: t.card },
-        h('div', { className: 'text-sm font-medium mb-2', style: t.text }, 'Add manual account'),
-        h('div', { className: 'text-xs mb-3', style: t.faint }, 'For direct API access without Postiz. You provide the token.'),
+        h('div', { className: 'text-sm font-medium mb-2', style: t.text }, 'Add direct API token'),
+        h('div', { className: 'text-xs mb-3', style: t.faint }, 'For platforms where you have your own API credentials. Token is encrypted at rest.'),
         h('div', { className: 'grid grid-cols-1 gap-2 sm:grid-cols-2' },
           h('div', null,
             h('div', { className: 'text-xs font-medium mb-1', style: t.faint }, 'Platform'),
             h('select', { value: manPlatform, onChange: (e: any) => setManPlatform(e.target.value), style: t.input },
-              h('option', { value: 'twitter' }, 'Twitter / X'),
-              h('option', { value: 'instagram' }, 'Instagram'),
-              h('option', { value: 'linkedin' }, 'LinkedIn'),
-              h('option', { value: 'bluesky' }, 'Bluesky'),
-              h('option', { value: 'mastodon' }, 'Mastodon'),
+              ...drivers.map((d) => h('option', { key: d.platform, value: d.platform }, d.label))
             ),
           ),
           h('div', null,
             h('div', { className: 'text-xs font-medium mb-1', style: t.faint }, 'Display name'),
-            h('input', { value: manName, onChange: (e: any) => setManName(e.target.value), placeholder: 'My X account', style: t.input }),
+            h('input', { value: manName, onChange: (e: any) => setManName(e.target.value), placeholder: 'My account', style: t.input }),
           ),
           h('div', null,
             h('div', { className: 'text-xs font-medium mb-1', style: t.faint }, 'Username'),
@@ -350,63 +313,117 @@
         ),
       ),
 
-      // ---- Loading ----
-      loading && h('div', { style: t.card },
-        h('div', { className: 'py-6 text-center text-sm', style: t.faint }, 'Detecting providers…'),
-      ),
-
-      // ---- Provider groups ----
-      !loading && allProviders.length === 0 && h('div', { style: t.card },
-        h('div', { className: 'py-6 text-center space-y-2' },
-          h('div', { className: 'text-sm', style: t.faint }, 'No providers detected'),
-          h('div', { className: 'text-xs', style: t.faint },
-            'Connect Postiz for full social media management, or add accounts manually.'
+      // ---- Connected platforms ----
+      connectedDrivers.length > 0 && h('div', { style: t.card },
+        h('div', { className: 'flex items-center gap-2 mb-3' },
+          h('div', { className: 'text-sm font-medium', style: t.text }, 'Connected'),
+          h('span', { style: t.badge('rgba(74,222,128,0.7)') }, `${connectedCount}`),
+        ),
+        h('div', { className: 'space-y-2' },
+          ...connectedDrivers.map((d) =>
+            h('div', { key: d.platform, style: { ...t.card, padding: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' } },
+              d.avatar
+                ? h('img', { src: d.avatar, alt: '', style: { width: 36, height: 36, borderRadius: '50%', objectFit: 'cover' } })
+                : h('div', {
+                  style: {
+                    width: 36, height: 36, borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.06)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '1.1rem',
+                  },
+                }, d.icon),
+              h('div', { style: { flex: 1, minWidth: 0 } },
+                h('div', { className: 'text-sm font-medium', style: t.text }, d.displayName),
+                h('div', { className: 'text-xs', style: t.faint },
+                  [d.username, d.platform].filter(Boolean).join(' · ')
+                ),
+              ),
+              h('div', { className: 'flex items-center gap-2 shrink-0 flex-wrap' },
+                h('span', { style: t.badge(BACKEND_COLORS[d.backend] || BACKEND_COLORS.none) }, BACKEND_LABELS[d.backend] || d.backend),
+                d.capabilities.canPost && h('span', { style: t.capPill(true) }, 'post'),
+                d.capabilities.canSchedule && h('span', { style: t.capPill(true) }, 'schedule'),
+                d.capabilities.canUploadMedia && h('span', { style: t.capPill(true) }, 'media'),
+                d.capabilities.maxLength && h('span', { style: t.capPill(false) }, `${d.capabilities.maxLength} chars`),
+                h('div', {
+                  style: {
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: 'rgba(74,222,128,0.8)',
+                  },
+                }),
+              ),
+            )
           ),
         ),
       ),
 
-      !loading && Object.entries(grouped).map(([type, items]) =>
-        h('div', { key: type, style: t.card },
-          h('div', { className: 'flex items-center gap-2 mb-3' },
-            h('div', { className: 'text-sm font-medium', style: t.text }, typeLabels[type] || type),
-            h('span', { style: t.badge(TYPE_COLORS[type] || 'rgba(100,100,100,0.6)') }, `${items.length}`),
+      // ---- Disconnected platforms ----
+      disconnectedDrivers.length > 0 && h('div', { style: t.card },
+        h('div', { className: 'flex items-center gap-2 mb-3' },
+          h('div', { className: 'text-sm font-medium', style: t.text }, 'Available'),
+          h('span', { style: t.badge('rgba(100,100,100,0.5)') }, `${disconnectedDrivers.length}`),
+        ),
+        h('div', { className: 'text-xs mb-3', style: t.faint },
+          'Connect these via Postiz or by adding a direct API token above.'
+        ),
+        h('div', { className: 'space-y-2' },
+          ...disconnectedDrivers.map((d) =>
+            h('div', { key: d.platform, style: { ...t.card, padding: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem', opacity: 0.6 } },
+              h('div', {
+                style: {
+                  width: 36, height: 36, borderRadius: '50%',
+                  background: 'rgba(255,255,255,0.04)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '1.1rem',
+                },
+              }, d.icon),
+              h('div', { style: { flex: 1, minWidth: 0 } },
+                h('div', { className: 'text-sm font-medium', style: t.text }, d.label),
+                h('div', { className: 'text-xs', style: t.faint }, 'Not connected'),
+              ),
+              h('div', { className: 'flex items-center gap-2 shrink-0' },
+                d.capabilities.maxLength && h('span', { style: t.capPill(false) }, `${d.capabilities.maxLength} chars`),
+                h('div', {
+                  style: {
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: 'rgba(100,100,100,0.4)',
+                  },
+                }),
+              ),
+            )
           ),
-          h('div', { className: 'space-y-2' },
-            ...items.map((p) =>
-              h('div', { key: p.id, style: { ...t.card, padding: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' } },
-                // Avatar or platform icon
-                p.avatar
-                  ? h('img', { src: p.avatar, alt: '', style: { width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' } })
-                  : h('div', {
-                    style: {
-                      width: 32, height: 32, borderRadius: '50%',
-                      background: 'rgba(255,255,255,0.06)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '1rem',
-                    },
-                  }, PLATFORM_ICONS[p.platform] || '🔗'),
-                // Info
-                h('div', { style: { flex: 1, minWidth: 0 } },
-                  h('div', { className: 'text-sm font-medium', style: t.text }, p.displayName),
-                  h('div', { className: 'text-xs', style: t.faint },
-                    [p.platform, p.username].filter(Boolean).join(' · ')
-                  ),
+        ),
+      ),
+
+      // ---- Manual accounts (if any exist beyond drivers) ----
+      manualAccounts.length > 0 && h('div', { style: t.card },
+        h('div', { className: 'flex items-center gap-2 mb-3' },
+          h('div', { className: 'text-sm font-medium', style: t.text }, 'Stored tokens'),
+          h('span', { style: t.badge('rgba(251,191,36,0.7)') }, `${manualAccounts.length}`),
+        ),
+        h('div', { className: 'text-xs mb-3', style: t.faint }, 'Tokens stored locally, encrypted at rest. These feed into the direct backend for their platform driver.'),
+        h('div', { className: 'space-y-2' },
+          ...manualAccounts.map((a) =>
+            h('div', { key: a.id, style: { ...t.card, padding: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' } },
+              h('div', { style: { flex: 1, minWidth: 0 } },
+                h('div', { className: 'text-sm', style: t.text }, a.displayName),
+                h('div', { className: 'text-xs', style: t.faint },
+                  [a.platform, a.username].filter(Boolean).join(' · ')
                 ),
-                // Status + capabilities
-                h('div', { className: 'flex items-center gap-2 shrink-0' },
-                  p.capabilities?.includes('schedule') && h('span', { className: 'text-xs', style: t.faint }, '⏱'),
-                  p.capabilities?.includes('post') && h('span', { className: 'text-xs', style: t.faint }, '📤'),
-                  h('div', {
-                    style: {
-                      width: 8, height: 8, borderRadius: '50%',
-                      background: p.isActive ? 'rgba(74,222,128,0.8)' : 'rgba(248,113,113,0.6)',
-                    },
-                  }),
-                ),
-              )
-            ),
+              ),
+              h('div', {
+                style: {
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: a.isActive ? 'rgba(74,222,128,0.8)' : 'rgba(248,113,113,0.6)',
+                },
+              }),
+            )
           ),
-        )
+        ),
+      ),
+
+      // ---- Loading ----
+      loading && drivers.length === 0 && h('div', { style: t.card },
+        h('div', { className: 'py-6 text-center text-sm', style: t.faint }, 'Detecting platform drivers…'),
       ),
     );
   }
