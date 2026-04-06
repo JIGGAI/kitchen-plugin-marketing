@@ -13,10 +13,24 @@
   const useCallback = R.useCallback;
   const useRef = R.useRef;
   // Portal helper — render modals at document.body to escape parent overflow/transform traps
-  const Portal = ({ children }: { children: any }) => {
-    if (RD?.createPortal) return RD.createPortal(children, document.body);
-    return children; // fallback: render in-place if ReactDOM unavailable
-  };
+  function Portal({ children }: { children: any }) {
+    // Try to get ReactDOM (may be exposed late by host)
+    const rd = RD || (typeof window !== 'undefined' && (window as any).ReactDOM);
+    const [container] = useState(() => {
+      if (typeof document === 'undefined') return null;
+      const el = document.createElement('div');
+      el.setAttribute('data-ck-portal', 'marketing');
+      return el;
+    });
+    useEffect(() => {
+      if (!container) return;
+      document.body.appendChild(container);
+      return () => { document.body.removeChild(container); };
+    }, [container]);
+    if (rd?.createPortal && container) return rd.createPortal(children, container);
+    if (container) return rd?.createPortal ? rd.createPortal(children, container) : children;
+    return children;
+  }
 
   /* ================================================================
    * Styles — all using --ck-* CSS vars for dark-theme consistency
