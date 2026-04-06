@@ -530,26 +530,53 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   if (req.path === '/media' && req.method === 'POST') {
     try {
       const body = req.body as {
-        data: string; // base64 (optionally with data: prefix)
+        data?: string; // base64 (optionally with data: prefix)
+        sourceUrl?: string; // server-side fetch
         filename?: string;
         mimeType?: string;
         alt?: string;
         tags?: string[];
       };
-      if (!body?.data) return apiError(400, 'VALIDATION_ERROR', 'data (base64) is required');
 
-      // Strip data URL prefix if present
-      let base64 = body.data;
-      let detectedMime = body.mimeType || 'application/octet-stream';
-      const dataUrlMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
-      if (dataUrlMatch) {
-        detectedMime = dataUrlMatch[1];
-        base64 = dataUrlMatch[2];
+      if (!body?.data && !body?.sourceUrl) {
+        return apiError(400, 'VALIDATION_ERROR', 'data (base64) or sourceUrl is required');
       }
 
-      const buf = Buffer.from(base64, 'base64');
+      let buf: Buffer;
+      let detectedMime = body.mimeType || 'application/octet-stream';
+      let originalName = body.filename;
+
+      if (body.sourceUrl && !body.data) {
+        // Server-side download (useful for workflows/automation):
+        // avoids having to base64-encode large files client-side.
+        const res = await fetch(body.sourceUrl);
+        if (!res.ok) {
+          return apiError(400, 'VALIDATION_ERROR', `Failed to fetch sourceUrl (${res.status})`);
+        }
+        const ct = res.headers.get('content-type');
+        if (ct) detectedMime = ct.split(';')[0].trim();
+        const u = new URL(body.sourceUrl);
+        const leaf = u.pathname.split('/').filter(Boolean).pop();
+        if (!originalName && leaf) originalName = leaf;
+        const ab = await res.arrayBuffer();
+        buf = Buffer.from(ab);
+
+        // Safety cap (25MB)
+        if (buf.length > 25 * 1024 * 1024) {
+          return apiError(400, 'VALIDATION_ERROR', 'Media too large (max 25MB)');
+        }
+      } else {
+        // Base64 upload
+        let base64 = String(body.data || '');
+        const dataUrlMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
+        if (dataUrlMatch) {
+          detectedMime = dataUrlMatch[1];
+          base64 = dataUrlMatch[2];
+        }
+        buf = Buffer.from(base64, 'base64');
+      }
       const id = randomUUID();
-      const ext = extname(body.filename || '') || mimeToExt(detectedMime);
+      const ext = extname(originalName || '') || mimeToExt(detectedMime);
       const storedFilename = `${id}${ext}`;
       const dir = ensureMediaDir(teamId);
       const filePath = join(dir, storedFilename);
@@ -563,7 +590,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         id,
         teamId,
         filename: storedFilename,
-        originalName: body.filename || storedFilename,
+        originalName: originalName || storedFilename,
         mimeType: detectedMime,
         size: buf.length,
         width: null as number | null,
