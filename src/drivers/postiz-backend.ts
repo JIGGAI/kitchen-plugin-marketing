@@ -88,26 +88,29 @@ export async function postizPublish(
   // Build image array from media URLs
   const image = (options?.mediaUrls || []).map((url, i) => ({ id: `img${i}`, path: url }));
 
-  // Postiz v1 payload format: { type, date?, posts: [{ integration: { id }, value: { content, image, settings } }] }
+  // Postiz v1 payload:
+  //   date is ALWAYS required (even for "now" posts)
+  //   value is an ARRAY of content objects
+  //   settings is a SIBLING of value (not nested inside it)
+  const postDate = options?.scheduledAt || new Date().toISOString();
   const payload: Record<string, unknown> = {
     type: options?.scheduledAt ? 'schedule' : 'now',
+    date: postDate,
     shortLink: false,
     tags: [],
     posts: [
       {
         integration: { id: integrationId },
-        value: {
-          content,
-          image,
-          settings,
-        },
+        value: [
+          {
+            content,
+            image,
+            settings,
+          },
+        ],
       },
     ],
   };
-
-  if (options?.scheduledAt) {
-    payload.date = options.scheduledAt;
-  }
 
   const res = await postizFetch(config, '/posts', {
     method: 'POST',
