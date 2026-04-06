@@ -21,8 +21,12 @@ export async function postizFetch(config: PostizConfig, path: string, options?: 
 export interface PostizIntegration {
   id: string;
   name: string;
-  providerIdentifier: string;
+  /** Postiz returns this as 'identifier' (e.g. 'facebook', 'instagram-standalone', 'x') */
+  identifier: string;
+  /** Some versions may use providerIdentifier */
+  providerIdentifier?: string;
   username?: string;
+  profile?: string;
   picture?: string;
   disabled?: boolean;
 }

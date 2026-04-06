@@ -49,8 +49,14 @@ export abstract class BaseDriver implements PostingDriver {
     if (this.config.postiz) {
       try {
         const integrations = await getPostizIntegrations(this.config.postiz);
+        // Match on identifier field — Postiz uses compound identifiers like
+        // 'instagram-standalone', 'facebook', 'x', etc.
         const match = integrations.find(
-          (i) => i.providerIdentifier === this.postizProvider && !i.disabled
+          (i) => {
+            const id = (i.identifier || i.providerIdentifier || '').toLowerCase();
+            const target = this.postizProvider.toLowerCase();
+            return !i.disabled && (id === target || id.startsWith(target + '-') || id.startsWith(target + '_'));
+          }
         );
         if (match) {
           this._postizIntegrationId = this.config.postiz.integrationId || match.id;
@@ -58,7 +64,7 @@ export abstract class BaseDriver implements PostingDriver {
             connected: true,
             backend: 'postiz',
             displayName: match.name || `${this.label} (Postiz)`,
-            username: match.username,
+            username: match.profile || match.username,
             avatar: match.picture,
             integrationId: match.id,
           };
