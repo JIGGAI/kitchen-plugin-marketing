@@ -15,6 +15,7 @@ export abstract class BaseDriver implements PostingDriver {
 
   protected config: DriverConfig;
   private _postizIntegrationId: string | null = null;
+  private _postizIdentifier: string | null = null;
   private _statusCache: DriverStatus | null = null;
 
   constructor(config: DriverConfig) {
@@ -60,6 +61,7 @@ export abstract class BaseDriver implements PostingDriver {
         );
         if (match) {
           this._postizIntegrationId = this.config.postiz.integrationId || match.id;
+          this._postizIdentifier = (match.identifier || match.providerIdentifier || this.postizProvider).toLowerCase();
           this._statusCache = {
             connected: true,
             backend: 'postiz',
@@ -121,7 +123,7 @@ export abstract class BaseDriver implements PostingDriver {
     const cfg = this.config.postiz;
     if (!cfg) return { success: false, error: 'Postiz not configured' };
 
-    // Ensure integration ID is resolved (getStatus populates it)
+    // Ensure integration ID + identifier are resolved (getStatus populates them)
     if (!this._postizIntegrationId) {
       await this.getStatus();
     }
@@ -132,6 +134,7 @@ export abstract class BaseDriver implements PostingDriver {
       scheduledAt: content.scheduledAt,
       mediaUrls: content.mediaUrls,
       settings: content.settings,
+      platformIdentifier: this._postizIdentifier || this.postizProvider,
     });
 
     return {
