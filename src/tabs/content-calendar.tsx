@@ -4,6 +4,7 @@
  */
 (function () {
   const R = (window as any).React;
+  const RD = (window as any).ReactDOM;
   if (!R) return;
   const h = R.createElement;
   const useState = R.useState;
@@ -11,6 +12,11 @@
   const useMemo = R.useMemo;
   const useCallback = R.useCallback;
   const useRef = R.useRef;
+  // Portal helper — render modals at document.body to escape parent overflow/transform traps
+  const Portal = ({ children }: { children: any }) => {
+    if (RD?.createPortal) return RD.createPortal(children, document.body);
+    return children; // fallback: render in-place if ReactDOM unavailable
+  };
 
   /* ================================================================
    * Styles — all using --ck-* CSS vars for dark-theme consistency
@@ -613,7 +619,8 @@
       if (!previewPost) return null;
       const p = previewPost;
       const d = p.scheduledAt ? new Date(p.scheduledAt) : new Date(p.createdAt);
-      return h('div', { style: s.overlay, onClick: () => setPreviewPost(null) },
+      return h(Portal, null,
+        h('div', { style: s.overlay, onClick: () => setPreviewPost(null) },
         h('div', {
           style: { ...s.modal, maxWidth: '550px' },
           onClick: (e: any) => e.stopPropagation(),
@@ -662,7 +669,7 @@
             ),
           ),
         ),
-      );
+      ));
     }
 
     /* =================================================================
@@ -678,7 +685,8 @@
         return limits.length > 0 ? Math.min(...limits) : undefined;
       }, [modalPlatforms, drivers]);
 
-      return h('div', { style: s.overlay, onClick: () => setModalOpen(false) },
+      return h(Portal, null,
+        h('div', { style: s.overlay, onClick: () => setModalOpen(false) },
         h('div', {
           style: s.modal,
           onClick: (e: any) => e.stopPropagation(),
@@ -987,7 +995,7 @@
             },
           }, modalError || modalSuccess),
         ),
-      );
+      ));
     }
 
     /* =================================================================
