@@ -108,6 +108,7 @@ export async function postizPublish(
             settings,
           },
         ],
+        settings,
       },
     ],
   };
