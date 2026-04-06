@@ -330,118 +330,212 @@
 
     return h('div', { className: 'space-y-3' },
 
-      // ---- Composer ----
+      // ---- Composer (two-column: compose left, preview right) ----
       h('div', { style: t.card },
         h('div', { className: 'text-sm font-medium mb-3', style: t.text }, 'Compose'),
-        h('div', { className: 'space-y-3' },
+        h('div', { style: { display: 'flex', gap: '1rem' } },
 
-          h('textarea', {
-            value: content,
-            onChange: (e: any) => setContent(e.target.value),
-            placeholder: 'Write your post…',
-            rows: 5,
-            style: { ...t.input, resize: 'vertical' as const, minHeight: '110px', fontFamily: 'inherit' },
-          }),
+          // LEFT — compose pane
+          h('div', { style: { flex: 1, minWidth: 0 }, className: 'space-y-3' },
 
-          // Character count
-          charLimit && content.length > 0 && h('div', { style: t.charWarn((content.length / charLimit) * 100) },
-            `${content.length} / ${charLimit} characters`,
-            content.length > charLimit && ' ⚠ over limit'
-          ),
-          !charLimit && content.length > 0 && h('div', { className: 'text-xs', style: t.faint }, `${content.length} chars`),
+            h('textarea', {
+              value: content,
+              onChange: (e: any) => setContent(e.target.value),
+              placeholder: 'Write your post…',
+              rows: 5,
+              style: { ...t.input, resize: 'vertical' as const, minHeight: '160px', fontFamily: 'inherit' },
+            }),
 
-          // Platform selector — connected
-          h('div', null,
-            h('div', { className: 'text-xs font-medium mb-2', style: t.faint }, 'Publish to'),
-            connectedDrivers.length > 0
-              ? h('div', { className: 'flex flex-wrap gap-2' },
-                  ...connectedDrivers.map((d) =>
-                    h('span', {
-                      key: d.platform,
-                      onClick: () => togglePlatform(d.platform),
-                      style: t.pill(selectedPlatforms.includes(d.platform), true),
-                      role: 'button',
-                      tabIndex: 0,
-                      title: `${d.displayName} via ${d.backend}`,
-                    },
-                      `${d.icon} ${d.label}`,
-                      h('span', { style: t.backendBadge(d.backend) }, d.backend),
-                    )
-                  ),
-                  // Show disconnected as disabled
-                  ...disconnectedDrivers.map((d) =>
-                    h('span', {
-                      key: d.platform,
-                      style: t.pill(false, false),
-                      title: `${d.label} — not connected`,
-                    }, `${d.icon} ${d.label}`)
-                  ),
-                )
-              : h('div', { className: 'flex flex-wrap gap-2' },
-                  ...drivers.map((d) =>
-                    h('span', { key: d.platform, style: t.pill(false, false), title: 'Not connected' },
-                      `${d.icon} ${d.label}`
-                    )
-                  ),
-                  h('div', { className: 'text-xs mt-1', style: t.faint },
-                    'No platforms connected. Go to Accounts tab to set up Postiz or add accounts.'
-                  ),
-                ),
-          ),
-
-          // Media URL (collapsible)
-          h('div', null,
-            h('button', {
-              type: 'button',
-              onClick: () => setShowMedia(!showMedia),
-              style: { ...t.btnGhost, padding: '0.3rem 0.55rem', fontSize: '0.8rem' },
-            }, showMedia ? '− Media' : '+ Media'),
-            showMedia && h('div', { className: 'mt-2' },
-              h('input', {
-                type: 'url',
-                value: mediaUrl,
-                onChange: (e: any) => setMediaUrl(e.target.value),
-                placeholder: 'Paste image or video URL…',
-                style: t.input,
-              }),
+            // Character count
+            charLimit && content.length > 0 && h('div', { style: t.charWarn((content.length / charLimit) * 100) },
+              `${content.length} / ${charLimit} characters`,
+              content.length > charLimit && ' ⚠ over limit'
             ),
-          ),
+            !charLimit && content.length > 0 && h('div', { className: 'text-xs', style: t.faint }, `${content.length} chars`),
 
-          // Schedule (only if any selected platform supports it)
-          (canSchedule || !hasSelection) && h('div', { className: 'grid grid-cols-1 gap-2 sm:grid-cols-2' },
+            // Platform selector — connected
             h('div', null,
-              h('div', { className: 'text-xs font-medium mb-1', style: t.faint },
-                canSchedule ? 'Schedule (optional)' : 'Schedule (connect Postiz for scheduling)'
+              h('div', { className: 'text-xs font-medium mb-2', style: t.faint }, 'Publish to'),
+              connectedDrivers.length > 0
+                ? h('div', { className: 'flex flex-wrap gap-2' },
+                    ...connectedDrivers.map((d) =>
+                      h('span', {
+                        key: d.platform,
+                        onClick: () => togglePlatform(d.platform),
+                        style: t.pill(selectedPlatforms.includes(d.platform), true),
+                        role: 'button',
+                        tabIndex: 0,
+                        title: `${d.displayName} via ${d.backend}`,
+                      },
+                        `${d.icon} ${d.label}`,
+                        h('span', { style: t.backendBadge(d.backend) }, d.backend),
+                      )
+                    ),
+                    // Show disconnected as disabled
+                    ...disconnectedDrivers.map((d) =>
+                      h('span', {
+                        key: d.platform,
+                        style: t.pill(false, false),
+                        title: `${d.label} — not connected`,
+                      }, `${d.icon} ${d.label}`)
+                    ),
+                  )
+                : h('div', { className: 'flex flex-wrap gap-2' },
+                    ...drivers.map((d) =>
+                      h('span', { key: d.platform, style: t.pill(false, false), title: 'Not connected' },
+                        `${d.icon} ${d.label}`
+                      )
+                    ),
+                    h('div', { className: 'text-xs mt-1', style: t.faint },
+                      'No platforms connected. Go to Accounts tab to set up Postiz or add accounts.'
+                    ),
+                  ),
+            ),
+
+            // Media URL (collapsible)
+            h('div', null,
+              h('button', {
+                type: 'button',
+                onClick: () => setShowMedia(!showMedia),
+                style: { ...t.btnGhost, padding: '0.3rem 0.55rem', fontSize: '0.8rem' },
+              }, showMedia ? '− Media' : '+ Media'),
+              showMedia && h('div', { className: 'mt-2' },
+                h('input', {
+                  type: 'url',
+                  value: mediaUrl,
+                  onChange: (e: any) => setMediaUrl(e.target.value),
+                  placeholder: 'Paste image or video URL…',
+                  style: t.input,
+                }),
               ),
-              h('input', {
-                type: 'datetime-local',
-                value: scheduledAt,
-                onChange: (e: any) => setScheduledAt(e.target.value),
-                style: { ...t.input, opacity: canSchedule || !hasSelection ? 1 : 0.5 },
-                disabled: hasSelection && !canSchedule,
+            ),
+
+            // Schedule (only if any selected platform supports it)
+            (canSchedule || !hasSelection) && h('div', { className: 'grid grid-cols-1 gap-2 sm:grid-cols-2' },
+              h('div', null,
+                h('div', { className: 'text-xs font-medium mb-1', style: t.faint },
+                  canSchedule ? 'Schedule (optional)' : 'Schedule (connect Postiz for scheduling)'
+                ),
+                h('input', {
+                  type: 'datetime-local',
+                  value: scheduledAt,
+                  onChange: (e: any) => setScheduledAt(e.target.value),
+                  style: { ...t.input, opacity: canSchedule || !hasSelection ? 1 : 0.5 },
+                  disabled: hasSelection && !canSchedule,
+                }),
+              ),
+            ),
+
+            // Actions
+            h('div', { className: 'flex flex-wrap gap-2 items-center' },
+              h('button', {
+                type: 'button',
+                onClick: () => void onSaveDraft(),
+                style: { ...t.btnGhost, opacity: saving ? 0.7 : 1 },
+                disabled: saving || !content.trim(),
+              }, saving ? 'Saving…' : 'Save draft'),
+
+              hasConnected && hasSelection && h('button', {
+                type: 'button',
+                onClick: () => void onPublish(),
+                style: { ...t.btnPublish, opacity: publishing ? 0.7 : 1 },
+                disabled: publishing || !content.trim(),
+              }, publishing ? 'Publishing…' : (scheduledAt ? '⏱ Schedule' : '📤 Publish now')),
+            ),
+
+            error && h('div', { className: 'text-xs', style: { color: 'rgba(248,113,113,0.95)' } }, error),
+            success && h('div', { className: 'text-xs', style: { color: 'rgba(74,222,128,0.9)' } }, success),
+          ),
+
+          // RIGHT — live preview pane
+          h('div', {
+            style: {
+              width: '320px', flexShrink: 0,
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid var(--ck-border-subtle)',
+              borderRadius: '10px', padding: '1rem',
+              display: 'flex', flexDirection: 'column' as const,
+              alignSelf: 'flex-start',
+            },
+          },
+            h('div', { className: 'text-sm font-medium mb-3', style: t.text }, 'Post Preview'),
+
+            // Selected platforms
+            selectedPlatforms.length > 0 && h('div', { className: 'flex flex-wrap gap-1 mb-3' },
+              ...selectedPlatforms.map((pl) => {
+                const drv = drivers.find((d) => d.platform === pl);
+                return h('span', {
+                  key: pl,
+                  style: {
+                    background: 'rgba(127,90,240,0.15)', border: '1px solid rgba(127,90,240,0.3)',
+                    borderRadius: '999px', padding: '0.12rem 0.45rem', fontSize: '0.72rem',
+                    color: 'var(--ck-text-secondary)',
+                  },
+                }, drv ? `${drv.icon} ${drv.label}` : pl);
               }),
             ),
+
+            // Scheduling info
+            scheduledAt && h('div', {
+              className: 'text-xs mb-3',
+              style: { color: 'rgba(251,191,36,0.85)' },
+            }, `⏱ Scheduled: ${new Date(scheduledAt).toLocaleString()}`),
+
+            // Content preview
+            content.trim()
+              ? h('div', {
+                  style: {
+                    background: 'rgba(255,255,255,0.03)', border: '1px solid var(--ck-border-subtle)',
+                    borderRadius: '10px', padding: '0.85rem',
+                    whiteSpace: 'pre-wrap' as const, fontSize: '0.85rem',
+                    color: 'var(--ck-text-primary)', lineHeight: '1.55',
+                    maxHeight: '300px', overflowY: 'auto' as const,
+                    wordBreak: 'break-word' as const,
+                  },
+                }, content)
+              : h('div', {
+                  style: {
+                    color: 'var(--ck-text-tertiary)', fontSize: '0.85rem',
+                    fontStyle: 'italic' as const, padding: '2rem 0.5rem',
+                    textAlign: 'center' as const,
+                  },
+                }, 'Start writing to see a preview'),
+
+            // Media preview
+            mediaUrl && showMedia && h('div', { className: 'mt-3' },
+              h('img', {
+                src: mediaUrl,
+                style: {
+                  maxWidth: '100%', borderRadius: '8px',
+                  border: '1px solid var(--ck-border-subtle)',
+                },
+                onError: (e: any) => { e.target.style.display = 'none'; },
+              }),
+            ),
+
+            // Character limit bar
+            charLimit && content.length > 0 && h('div', { className: 'mt-3' },
+              h('div', { style: { height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' } },
+                h('div', {
+                  style: {
+                    height: '100%', borderRadius: '2px',
+                    width: `${Math.min((content.length / charLimit) * 100, 100)}%`,
+                    background: content.length > charLimit ? 'rgba(248,113,113,0.8)'
+                      : content.length > charLimit * 0.9 ? 'rgba(251,191,36,0.8)'
+                      : 'rgba(127,90,240,0.6)',
+                    transition: 'width 0.2s, background 0.2s',
+                  },
+                }),
+              ),
+              h('div', {
+                className: 'text-xs mt-1',
+                style: {
+                  color: content.length > charLimit ? 'rgba(248,113,113,0.9)' : 'var(--ck-text-tertiary)',
+                  textAlign: 'right' as const,
+                },
+              }, `${content.length} / ${charLimit}`),
+            ),
           ),
-
-          // Actions
-          h('div', { className: 'flex flex-wrap gap-2 items-center' },
-            h('button', {
-              type: 'button',
-              onClick: () => void onSaveDraft(),
-              style: { ...t.btnGhost, opacity: saving ? 0.7 : 1 },
-              disabled: saving || !content.trim(),
-            }, saving ? 'Saving…' : 'Save draft'),
-
-            hasConnected && hasSelection && h('button', {
-              type: 'button',
-              onClick: () => void onPublish(),
-              style: { ...t.btnPublish, opacity: publishing ? 0.7 : 1 },
-              disabled: publishing || !content.trim(),
-            }, publishing ? 'Publishing…' : (scheduledAt ? '⏱ Schedule' : '📤 Publish now')),
-          ),
-
-          error && h('div', { className: 'text-xs', style: { color: 'rgba(248,113,113,0.95)' } }, error),
-          success && h('div', { className: 'text-xs', style: { color: 'rgba(74,222,128,0.9)' } }, success),
         ),
       ),
 
