@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import type { KitchenPluginContext } from './types-kitchen';
 import { initializeDatabase, encryptCredentials, decryptCredentials } from '../db';
 import * as schema from '../db/schema';
+import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import type {
   ApiError,
   PaginatedResponse,
@@ -38,12 +39,7 @@ function parsePagination(query: Record<string, string | undefined>) {
 }
 
 function getTeamId(req: PluginRequest): string {
-  return (
-    req.query.team ||
-    req.query.teamId ||
-    req.headers['x-team-id'] ||
-    'default'
-  );
+  return req.query.team || req.query.teamId || req.headers['x-team-id'] || 'default';
 }
 
 function getUserId(req: PluginRequest): string {
@@ -51,170 +47,51 @@ function getUserId(req: PluginRequest): string {
 }
 
 /* ================================================================== */
-/*  Postiz integration helpers                                         */
+/*  Backend sources — build from request context                       */
 /* ================================================================== */
 
-interface PostizConfig {
-  apiKey: string;
-  baseUrl: string; // e.g. https://api.postiz.com/public/v1  or self-hosted
-}
+function getBackendSources(req: PluginRequest, teamId: string): BackendSources {
+  const sources: BackendSources = {};
 
-function getPostizConfig(req: PluginRequest): PostizConfig | null {
-  // Check query params first, then headers
-  const apiKey = req.query.postizApiKey || req.headers['x-postiz-api-key'];
-  const baseUrl = req.query.postizBaseUrl || req.headers['x-postiz-base-url'] || 'https://api.postiz.com/public/v1';
-  if (!apiKey) return null;
-  return { apiKey, baseUrl: baseUrl.replace(/\/+$/, '') };
-}
-
-async function postizFetch(config: PostizConfig, path: string, options?: RequestInit): Promise<Response> {
-  return fetch(`${config.baseUrl}${path}`, {
-    ...options,
-    headers: {
-      'Authorization': config.apiKey,
-      'Content-Type': 'application/json',
-      ...(options?.headers || {}),
-    },
-  });
-}
-
-/* ================================================================== */
-/*  Auto-detect providers                                              */
-/* ================================================================== */
-
-interface DetectedProvider {
-  id: string;
-  type: 'postiz' | 'gateway' | 'skill';
-  platform: string;
-  displayName: string;
-  username?: string;
-  avatar?: string;
-  isActive: boolean;
-  capabilities: string[];
-  meta?: Record<string, unknown>;
-}
-
-/**
- * Detect available social posting providers from:
- * 1. Postiz (if API key configured) — list connected integrations
- * 2. Gateway message channels (discord, telegram) — can post to channels
- * 3. Skills that support posting (none currently, placeholder)
- */
-async function detectProviders(req: PluginRequest, teamId: string): Promise<DetectedProvider[]> {
-  const providers: DetectedProvider[] = [];
-
-  // --- 1. Postiz integrations ---
-  const postizCfg = getPostizConfig(req);
-  if (postizCfg) {
-    try {
-      const res = await postizFetch(postizCfg, '/integrations');
-      if (res.ok) {
-        const data = await res.json();
-        const integrations = Array.isArray(data) ? data : (data.integrations || []);
-        for (const integ of integrations) {
-          providers.push({
-            id: `postiz:${integ.id}`,
-            type: 'postiz',
-            platform: integ.providerIdentifier || integ.provider || 'unknown',
-            displayName: integ.name || integ.providerIdentifier || 'Postiz account',
-            username: integ.username || undefined,
-            avatar: integ.picture || integ.avatar || undefined,
-            isActive: !integ.disabled,
-            capabilities: ['post', 'schedule'],
-            meta: { postizId: integ.id, provider: integ.providerIdentifier },
-          });
-        }
-      }
-    } catch {
-      // Postiz not reachable — skip silently
-    }
+  // Postiz
+  const postizKey = req.query.postizApiKey || req.headers['x-postiz-api-key'];
+  if (postizKey) {
+    const baseUrl = req.query.postizBaseUrl || req.headers['x-postiz-base-url'] || 'https://api.postiz.com/public/v1';
+    sources.postiz = { apiKey: postizKey, baseUrl: baseUrl.replace(/\/+$/, '') };
   }
 
-  // --- 2. Gateway messaging channels ---
-  // These are read from the openclaw config and exposed as "posting targets"
-  // Discord and Telegram are confirmed enabled in this installation.
+  // Gateway channels
   try {
-    const fs = await import('fs');
-    const path = await import('path');
-    const os = await import('os');
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
     const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
     if (fs.existsSync(configPath)) {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       const plugins = cfg?.plugins?.entries || {};
-
-      if (plugins.discord?.enabled) {
-        providers.push({
-          id: 'gateway:discord',
-          type: 'gateway',
-          platform: 'discord',
-          displayName: 'Discord (via OpenClaw)',
-          isActive: true,
-          capabilities: ['post'],
-          meta: { channel: 'discord' },
-        });
-      }
-
-      if (plugins.telegram?.enabled) {
-        providers.push({
-          id: 'gateway:telegram',
-          type: 'gateway',
-          platform: 'telegram',
-          displayName: 'Telegram (via OpenClaw)',
-          isActive: true,
-          capabilities: ['post'],
-          meta: { channel: 'telegram' },
-        });
-      }
+      const channels: string[] = [];
+      if (plugins.discord?.enabled) channels.push('discord');
+      if (plugins.telegram?.enabled) channels.push('telegram');
+      sources.gatewayChannels = channels;
     }
-  } catch {
-    // Config read failed — skip
-  }
+  } catch { /* ignore */ }
 
-  return providers;
-}
+  // Stored accounts (decrypt credentials)
+  try {
+    const { db } = initializeDatabase(teamId);
+    const accounts = db
+      .select()
+      .from(schema.socialAccounts)
+      .where(and(eq(schema.socialAccounts.teamId, teamId), eq(schema.socialAccounts.isActive, true)))
+      .all();
 
-/* ================================================================== */
-/*  Postiz: create/schedule post                                       */
-/* ================================================================== */
+    sources.storedAccounts = accounts.map((a) => ({
+      platform: a.platform,
+      credentials: decryptCredentials(a.credentials) as any,
+    }));
+  } catch { /* ignore */ }
 
-interface PublishRequest {
-  content: string;
-  integrationIds: string[]; // postiz integration IDs
-  scheduledAt?: string; // ISO datetime
-  settings?: Record<string, unknown>; // per-platform settings
-  mediaUrls?: string[];
-}
-
-async function postizPublish(config: PostizConfig, body: PublishRequest): Promise<PluginResponse> {
-  const payload: Record<string, unknown> = {
-    content: body.content,
-    integrationIds: body.integrationIds,
-  };
-
-  if (body.scheduledAt) {
-    payload.date = body.scheduledAt;
-  }
-
-  if (body.settings) {
-    payload.settings = body.settings;
-  }
-
-  if (body.mediaUrls && body.mediaUrls.length > 0) {
-    payload.media = body.mediaUrls.map((url) => ({ url }));
-  }
-
-  const res = await postizFetch(config, '/posts', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-
-  const data = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    return apiError(res.status, 'POSTIZ_ERROR', data?.message || `Postiz returned ${res.status}`, data);
-  }
-
-  return { status: 201, data };
+  return sources;
 }
 
 /* ================================================================== */
@@ -224,41 +101,142 @@ async function postizPublish(config: PostizConfig, body: PublishRequest): Promis
 export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContext): Promise<PluginResponse> {
   const teamId = getTeamId(req);
 
-  // ---- /providers (auto-detect) ----
+  // ---- /drivers (list all platform drivers with status) ----
+  if (req.path === '/drivers' && req.method === 'GET') {
+    try {
+      const sources = getBackendSources(req, teamId);
+      const drivers = createAllDrivers(sources);
+
+      const results = await Promise.all(
+        drivers.map(async (d) => {
+          const status = await d.getStatus();
+          const caps = d.getCapabilities();
+          return {
+            platform: d.platform,
+            label: d.label,
+            icon: d.icon,
+            ...status,
+            capabilities: caps,
+          };
+        })
+      );
+
+      return { status: 200, data: { drivers: results } };
+    } catch (error: any) {
+      return apiError(500, 'DRIVER_ERROR', error?.message || 'Failed to load drivers');
+    }
+  }
+
+  // ---- /drivers/:platform/status ----
+  if (req.path.match(/^\/drivers\/([^/]+)\/status$/) && req.method === 'GET') {
+    const platform = req.path.split('/')[2];
+    const sources = getBackendSources(req, teamId);
+    const driver = createDriver(platform, {
+      postiz: sources.postiz,
+      gateway: sources.gatewayChannels?.includes(platform) ? { channel: platform } : undefined,
+      direct: sources.storedAccounts?.find((a) => a.platform === platform)?.credentials as any,
+    });
+    if (!driver) return apiError(404, 'NOT_FOUND', `No driver for platform: ${platform}`);
+
+    const status = await driver.getStatus();
+    const caps = driver.getCapabilities();
+    return { status: 200, data: { platform, ...status, capabilities: caps } };
+  }
+
+  // ---- /publish (unified multi-platform publish) ----
+  if (req.path === '/publish' && req.method === 'POST') {
+    const body = req.body as {
+      content: string;
+      platforms: string[];
+      mediaUrls?: string[];
+      scheduledAt?: string;
+      settings?: Record<string, Record<string, unknown>>; // per-platform settings
+    };
+
+    if (!body?.content || !body?.platforms?.length) {
+      return apiError(400, 'VALIDATION_ERROR', 'content and platforms[] are required');
+    }
+
+    const sources = getBackendSources(req, teamId);
+    const results: Array<{ platform: string; success: boolean; postId?: string; error?: string; backend?: string }> = [];
+
+    for (const platform of body.platforms) {
+      const driver = createDriver(platform, {
+        postiz: sources.postiz,
+        gateway: sources.gatewayChannels?.includes(platform) ? { channel: platform } : undefined,
+        direct: sources.storedAccounts?.find((a) => a.platform === platform)?.credentials as any,
+      });
+
+      if (!driver) {
+        results.push({ platform, success: false, error: `No driver for ${platform}` });
+        continue;
+      }
+
+      const status = await driver.getStatus();
+      if (!status.connected) {
+        results.push({ platform, success: false, error: `Not connected`, backend: status.backend });
+        continue;
+      }
+
+      const postContent: PostContent = {
+        text: body.content,
+        mediaUrls: body.mediaUrls,
+        scheduledAt: body.scheduledAt,
+        settings: body.settings?.[platform],
+      };
+
+      const result = await driver.publish(postContent);
+      results.push({
+        platform,
+        success: result.success,
+        postId: result.postId,
+        error: result.error,
+        backend: status.backend,
+      });
+    }
+
+    const allOk = results.every((r) => r.success);
+    return { status: allOk ? 201 : 207, data: { results } };
+  }
+
+  // ---- /platforms (list available platforms) ----
+  if (req.path === '/platforms' && req.method === 'GET') {
+    const sources = getBackendSources(req, teamId);
+    const drivers = createAllDrivers(sources);
+    const platforms = drivers.map((d) => ({
+      platform: d.platform,
+      label: d.label,
+      icon: d.icon,
+      capabilities: d.getCapabilities(),
+    }));
+    return { status: 200, data: { platforms } };
+  }
+
+  // ---- LEGACY /providers (keep for backward compat) ----
   if (req.path === '/providers' && req.method === 'GET') {
     try {
-      const providers = await detectProviders(req, teamId);
-      return { status: 200, data: { providers } };
+      const sources = getBackendSources(req, teamId);
+      const drivers = createAllDrivers(sources);
+      const providers = await Promise.all(
+        drivers.map(async (d) => {
+          const status = await d.getStatus();
+          if (!status.connected) return null;
+          return {
+            id: `${status.backend}:${d.platform}`,
+            type: status.backend,
+            platform: d.platform,
+            displayName: status.displayName,
+            username: status.username,
+            avatar: status.avatar,
+            isActive: status.connected,
+            capabilities: status.backend === 'postiz' ? ['post', 'schedule'] : ['post'],
+            meta: { integrationId: status.integrationId },
+          };
+        })
+      );
+      return { status: 200, data: { providers: providers.filter(Boolean) } };
     } catch (error: any) {
       return apiError(500, 'DETECT_ERROR', error?.message || 'Failed to detect providers');
-    }
-  }
-
-  // ---- /providers/postiz/integrations (raw passthrough) ----
-  if (req.path === '/providers/postiz/integrations' && req.method === 'GET') {
-    const postizCfg = getPostizConfig(req);
-    if (!postizCfg) return apiError(400, 'NO_POSTIZ', 'Postiz API key not configured');
-    try {
-      const res = await postizFetch(postizCfg, '/integrations');
-      const data = await res.json();
-      return { status: res.status, data };
-    } catch (error: any) {
-      return apiError(502, 'POSTIZ_UNREACHABLE', error?.message || 'Cannot reach Postiz');
-    }
-  }
-
-  // ---- /publish (post via Postiz) ----
-  if (req.path === '/publish' && req.method === 'POST') {
-    const postizCfg = getPostizConfig(req);
-    if (!postizCfg) return apiError(400, 'NO_POSTIZ', 'Postiz API key not configured');
-    const body = (req.body || {}) as PublishRequest;
-    if (!body.content || !body.integrationIds?.length) {
-      return apiError(400, 'VALIDATION_ERROR', 'content and integrationIds are required');
-    }
-    try {
-      return await postizPublish(postizCfg, body);
-    } catch (error: any) {
-      return apiError(502, 'POSTIZ_ERROR', error?.message || 'Publish failed');
     }
   }
 
@@ -269,12 +247,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const { limit, offset } = parsePagination(req.query);
 
       const conditions = [eq(schema.posts.teamId, teamId)];
-      if (req.query.status) {
-        conditions.push(eq(schema.posts.status, String(req.query.status)));
-      }
-      if (req.query.platform) {
-        conditions.push(like(schema.posts.platforms, `%\"${req.query.platform}\"%`));
-      }
+      if (req.query.status) conditions.push(eq(schema.posts.status, String(req.query.status)));
+      if (req.query.platform) conditions.push(like(schema.posts.platforms, `%"${req.query.platform}"%`));
 
       const totalResult = await db
         .select({ count: sql<number>`count(*)` })
@@ -373,7 +347,6 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   if (req.path === '/accounts' && req.method === 'GET') {
     try {
       const { db } = initializeDatabase(teamId);
-
       const accounts = await db
         .select()
         .from(schema.socialAccounts)
@@ -402,7 +375,6 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   if (req.path === '/accounts' && req.method === 'POST') {
     try {
       const body = (req.body || {}) as SocialAccountCreateRequest;
-
       if (!body.platform || !body.displayName || !body.credentials) {
         return apiError(400, 'VALIDATION_ERROR', 'platform, displayName, and credentials are required');
       }
