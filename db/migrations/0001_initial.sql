@@ -96,6 +96,15 @@ CREATE TABLE IF NOT EXISTS account_metrics (
   UNIQUE(account_id, date)
 );
 
+-- Plugin config table (per-team key-value store)
+CREATE TABLE IF NOT EXISTS plugin_config (
+  team_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (team_id, key)
+);
+
 -- Webhooks table
 CREATE TABLE IF NOT EXISTS webhooks (
   id TEXT PRIMARY KEY,

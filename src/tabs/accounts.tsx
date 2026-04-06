@@ -148,9 +148,18 @@
       }
     }, [teamId]);
 
-    const savePostizConfig = () => {
+    const savePostizConfig = async () => {
+      // Save to localStorage (for browser-side requests)
       try {
         localStorage.setItem(`ck-postiz-${teamId}`, JSON.stringify({ apiKey: postizKey, baseUrl: postizUrl }));
+      } catch { /* ignore */ }
+      // Also persist to plugin DB (for server-side workflows/automation)
+      try {
+        await fetch(`${apiBase}/config?team=${encodeURIComponent(teamId)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ postiz: { apiKey: postizKey, baseUrl: postizUrl } }),
+        });
       } catch { /* ignore */ }
       setShowPostizSetup(false);
       void loadDrivers();

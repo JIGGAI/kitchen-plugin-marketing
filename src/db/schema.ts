@@ -92,6 +92,16 @@ export const accountMetrics = sqliteTable('account_metrics', {
   syncedAt: text('synced_at').notNull(),
 });
 
+// Plugin config table (per-team key-value, e.g. Postiz API key)
+export const pluginConfig = sqliteTable('plugin_config', {
+  teamId: text('team_id').notNull(),
+  key: text('key').notNull(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.teamId, table.key] }),
+}));
+
 // Webhooks table
 export const webhooks = sqliteTable('webhooks', {
   id: text('id').primaryKey(),

@@ -57,11 +57,30 @@ function getUserId(req: PluginRequest): string {
 async function getBackendSources(req: PluginRequest, teamId: string): Promise<BackendSources> {
   const sources: BackendSources = {};
 
-  // Postiz
+  // Postiz — check header first, then fall back to DB-stored config
   const postizKey = req.query.postizApiKey || req.headers['x-postiz-api-key'];
   if (postizKey) {
     const baseUrl = req.query.postizBaseUrl || req.headers['x-postiz-base-url'] || 'https://api.postiz.com/public/v1';
     sources.postiz = { apiKey: postizKey, baseUrl: baseUrl.replace(/\/+$/, '') };
+  } else {
+    // Fall back to DB-stored Postiz config (set via Accounts tab "Save & Detect")
+    try {
+      const { db } = initializeDatabase(teamId);
+      const rows = db
+        .select()
+        .from(schema.pluginConfig)
+        .where(and(eq(schema.pluginConfig.teamId, teamId), eq(schema.pluginConfig.key, 'postiz')))
+        .all();
+      if (rows.length > 0) {
+        const parsed = JSON.parse(rows[0].value);
+        if (parsed.apiKey) {
+          sources.postiz = {
+            apiKey: String(parsed.apiKey),
+            baseUrl: String(parsed.baseUrl || 'https://api.postiz.com/public/v1').replace(/\/+$/, ''),
+          };
+        }
+      }
+    } catch { /* ignore DB read failures */ }
   }
 
   // Gateway channels
@@ -778,6 +797,64 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       return { status: 200, data: { deleted: true, id: mediaIdMatch[1] } };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to delete media');
+    }
+  }
+
+  // ---- /config (per-team plugin config — e.g. Postiz API key) ----
+  if (req.path === '/config' && req.method === 'GET') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const rows = db
+        .select()
+        .from(schema.pluginConfig)
+        .where(eq(schema.pluginConfig.teamId, teamId))
+        .all();
+      const config: Record<string, unknown> = {};
+      for (const row of rows) {
+        try { config[row.key] = JSON.parse(row.value); } catch { config[row.key] = row.value; }
+      }
+      return { status: 200, data: { config } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to read config');
+    }
+  }
+
+  if (req.path === '/config' && req.method === 'POST') {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const { db } = initializeDatabase(teamId);
+      const now = new Date().toISOString();
+
+      for (const [key, value] of Object.entries(body)) {
+        const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+        // Upsert: try insert, on conflict update
+        try {
+          db.run(
+            sql`INSERT INTO plugin_config (team_id, key, value, updated_at) VALUES (${teamId}, ${key}, ${valueStr}, ${now}) ON CONFLICT(team_id, key) DO UPDATE SET value = ${valueStr}, updated_at = ${now}`
+          );
+        } catch {
+          // Fallback for older SQLite without ON CONFLICT
+          const existing = db
+            .select()
+            .from(schema.pluginConfig)
+            .where(and(eq(schema.pluginConfig.teamId, teamId), eq(schema.pluginConfig.key, key)))
+            .all();
+          if (existing.length > 0) {
+            db.update(schema.pluginConfig)
+              .set({ value: valueStr, updatedAt: now })
+              .where(and(eq(schema.pluginConfig.teamId, teamId), eq(schema.pluginConfig.key, key)))
+              .run();
+          } else {
+            db.insert(schema.pluginConfig)
+              .values({ teamId, key, value: valueStr, updatedAt: now })
+              .run();
+          }
+        }
+      }
+
+      return { status: 200, data: { ok: true, keys: Object.keys(body) } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to save config');
     }
   }
 
