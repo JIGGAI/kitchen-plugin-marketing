@@ -51,7 +51,13 @@ try {
   const distMigrationsDir = path.join(distDir, 'db/migrations');
   fs.mkdirSync(distMigrationsDir, { recursive: true });
   for (const file of fs.readdirSync(migrationsDir)) {
-    fs.copyFileSync(path.join(migrationsDir, file), path.join(distMigrationsDir, file));
+    const src = path.join(migrationsDir, file);
+    const dest = path.join(distMigrationsDir, file);
+    if (fs.statSync(src).isDirectory()) {
+      fs.cpSync(src, dest, { recursive: true });
+    } else {
+      fs.copyFileSync(src, dest);
+    }
   }
   console.log('✓ Copied database migrations');
 

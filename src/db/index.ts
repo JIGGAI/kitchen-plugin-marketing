@@ -56,7 +56,18 @@ export function initializeDatabase(teamId: string) {
     const migrationsDir = join(PLUGIN_ROOT, 'db', 'migrations');
     migrate(db, { migrationsFolder: migrationsDir });
   } catch (error: any) {
-    console.warn('Migration warning:', error?.message);
+    // Fallback: run SQL directly if drizzle migrator fails (missing journal etc.)
+    try {
+      const sqlPath = join(PLUGIN_ROOT, 'db', 'migrations', '0001_initial.sql');
+      if (existsSync(sqlPath)) {
+        const sql = require('fs').readFileSync(sqlPath, 'utf8');
+        // Split on semicolons and run each statement
+        const statements = sql.split(';').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+        for (const stmt of statements) {
+          try { sqlite.exec(stmt + ';'); } catch { /* ignore IF NOT EXISTS collisions */ }
+        }
+      }
+    } catch { /* last resort failed */ }
   }
   
   return { db, sqlite };

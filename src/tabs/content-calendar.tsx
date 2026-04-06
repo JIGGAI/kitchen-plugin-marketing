@@ -113,7 +113,7 @@
     },
     modal: {
       background: 'var(--ck-bg-base, #0b0c10)', border: '1px solid var(--ck-border-subtle)',
-      borderRadius: '14px', width: '95vw', maxWidth: '900px', maxHeight: '90vh',
+      borderRadius: '14px', width: '96vw', maxWidth: '1200px', maxHeight: '92vh',
       overflow: 'auto' as const, display: 'flex', flexDirection: 'column' as const,
     },
     modalHeader: {
@@ -122,7 +122,7 @@
     },
     modalBody: { display: 'flex', flex: 1, minHeight: 0 },
     modalLeft: { flex: 1, padding: '1rem 1.25rem', borderRight: '1px solid var(--ck-border-subtle)', display: 'flex', flexDirection: 'column' as const, gap: '0.75rem' },
-    modalRight: { width: '280px', padding: '1rem 1.25rem', flexShrink: 0 },
+    modalRight: { width: '380px', padding: '1rem 1.25rem', flexShrink: 0 },
     modalFooter: {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '0.75rem 1.25rem', borderTop: '1px solid var(--ck-border-subtle)',
@@ -675,12 +675,82 @@
                 placeholder: 'Paste image or video URL…',
               }),
             ),
-            // Right — preview
+            // Right — social-post-style preview
             h('div', { style: s.modalRight },
-              h('div', { style: { fontWeight: 600, fontSize: '0.9rem', color: 'var(--ck-text-primary)', marginBottom: '0.5rem' } }, 'Post Preview'),
-              modalContent.trim()
-                ? h('div', { style: { ...s.previewPanel, whiteSpace: 'pre-wrap' as const, fontSize: '0.85rem', color: 'var(--ck-text-secondary)' } }, modalContent)
-                : h('div', { style: { color: 'var(--ck-text-tertiary)', fontSize: '0.85rem' } }, 'Start writing your post for a preview'),
+              h('div', { style: { fontWeight: 600, fontSize: '0.85rem', color: 'var(--ck-text-secondary)', marginBottom: '0.75rem' } }, 'Post Preview'),
+              h('div', {
+                style: {
+                  background: 'rgba(22,22,28,0.95)', borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden',
+                },
+              },
+                // Header
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.85rem 1rem 0' } },
+                  h('div', {
+                    style: {
+                      width: '40px', height: '40px', borderRadius: '50%',
+                      background: 'rgba(127,90,240,0.25)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '1.1rem', color: 'rgba(127,90,240,0.9)', flexShrink: 0,
+                    },
+                  }, '\ud83d\udc64'),
+                  h('div', null,
+                    h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.3rem' } },
+                      h('span', { style: { fontWeight: 700, fontSize: '0.9rem', color: 'var(--ck-text-primary)' } }, 'Your Brand'),
+                      h('span', { style: { color: 'rgba(99,179,237,0.9)', fontSize: '0.85rem' } }, '\u2713'),
+                    ),
+                    h('div', { style: { fontSize: '0.75rem', color: 'var(--ck-text-tertiary)' } },
+                      modalDate ? new Date(modalDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just now'),
+                  ),
+                ),
+                // Body
+                h('div', { style: { padding: '0.65rem 1rem 0.75rem' } },
+                  modalContent.trim()
+                    ? h('div', {
+                        style: {
+                          whiteSpace: 'pre-wrap' as const, fontSize: '0.9rem',
+                          color: 'var(--ck-text-primary)', lineHeight: '1.5',
+                          maxHeight: '300px', overflowY: 'auto' as const,
+                          wordBreak: 'break-word' as const,
+                        },
+                      }, modalContent)
+                    : h('div', {
+                        style: { color: 'var(--ck-text-tertiary)', fontSize: '0.85rem', fontStyle: 'italic' as const, padding: '1.5rem 0', textAlign: 'center' as const },
+                      }, 'Start writing to see a preview'),
+                ),
+                // Media preview
+                modalMediaUrl && h('img', {
+                  src: modalMediaUrl,
+                  style: { width: '100%', display: 'block' },
+                  onError: (e: any) => { e.target.style.display = 'none'; },
+                }),
+                // Engagement bar
+                h('div', {
+                  style: {
+                    display: 'flex', justifyContent: 'space-around',
+                    padding: '0.6rem 1rem', borderTop: '1px solid rgba(255,255,255,0.06)',
+                    fontSize: '0.8rem', color: 'var(--ck-text-tertiary)',
+                  },
+                },
+                  h('span', null, '\u2764\ufe0f 0'),
+                  h('span', null, '\ud83d\udcac 0'),
+                  h('span', null, '\ud83d\udd01 0'),
+                  h('span', null, '\ud83d\udcca 0'),
+                ),
+              ),
+              // Platform pills
+              modalPlatforms.length > 0 && h('div', {
+                style: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.35rem', marginTop: '0.65rem' },
+              },
+                ...modalPlatforms.map((pl: string) => h('span', {
+                  key: pl,
+                  style: {
+                    background: 'rgba(127,90,240,0.12)', border: '1px solid rgba(127,90,240,0.25)',
+                    borderRadius: '999px', padding: '0.1rem 0.4rem', fontSize: '0.7rem',
+                    color: 'var(--ck-text-secondary)',
+                  },
+                }, pl)),
+              ),
             ),
           ),
 

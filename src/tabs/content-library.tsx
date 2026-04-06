@@ -655,97 +655,145 @@
             success && h('div', { className: 'text-xs', style: { color: 'rgba(74,222,128,0.9)' } }, success),
           ),
 
-          // RIGHT — live preview pane
+          // RIGHT — social-post-style preview
           h('div', {
             style: {
-              width: '320px', flexShrink: 0,
-              background: 'rgba(255,255,255,0.02)',
+              width: '380px', flexShrink: 0,
+              background: 'rgba(0,0,0,0.25)',
               border: '1px solid var(--ck-border-subtle)',
-              borderRadius: '10px', padding: '1rem',
+              borderRadius: '16px', padding: '1.25rem',
               display: 'flex', flexDirection: 'column' as const,
               alignSelf: 'flex-start',
             },
           },
-            h('div', { className: 'text-sm font-medium mb-3', style: t.text }, 'Post Preview'),
+            h('div', {
+              style: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ck-text-secondary)', marginBottom: '1rem' },
+            }, 'Post Preview'),
 
-            // Selected platforms
-            selectedPlatforms.length > 0 && h('div', { className: 'flex flex-wrap gap-1 mb-3' },
+            // Social post card
+            h('div', {
+              style: {
+                background: 'rgba(22,22,28,0.95)', borderRadius: '12px',
+                border: '1px solid rgba(255,255,255,0.08)',
+                overflow: 'hidden',
+              },
+            },
+              // Post header (avatar + name + handle)
+              h('div', {
+                style: {
+                  display: 'flex', alignItems: 'center', gap: '0.65rem',
+                  padding: '0.85rem 1rem 0',
+                },
+              },
+                // Avatar circle
+                h('div', {
+                  style: {
+                    width: '40px', height: '40px', borderRadius: '50%',
+                    background: 'rgba(127,90,240,0.25)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '1.1rem', color: 'rgba(127,90,240,0.9)',
+                    flexShrink: 0,
+                  },
+                }, '👤'),
+                h('div', null,
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.3rem' } },
+                    h('span', {
+                      style: { fontWeight: 700, fontSize: '0.9rem', color: 'var(--ck-text-primary)' },
+                    }, 'Your Brand'),
+                    h('span', { style: { color: 'rgba(99,179,237,0.9)', fontSize: '0.85rem' } }, '✓'),
+                  ),
+                  h('div', {
+                    style: { fontSize: '0.75rem', color: 'var(--ck-text-tertiary)' },
+                  }, scheduledAt
+                    ? `Scheduled · ${new Date(scheduledAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                    : 'Just now'),
+                ),
+              ),
+
+              // Post body
+              h('div', { style: { padding: '0.65rem 1rem 0.75rem' } },
+                content.trim()
+                  ? h('div', {
+                      style: {
+                        whiteSpace: 'pre-wrap' as const, fontSize: '0.9rem',
+                        color: 'var(--ck-text-primary)', lineHeight: '1.5',
+                        maxHeight: '260px', overflowY: 'auto' as const,
+                        wordBreak: 'break-word' as const,
+                      },
+                    }, content)
+                  : h('div', {
+                      style: {
+                        color: 'var(--ck-text-tertiary)', fontSize: '0.85rem',
+                        fontStyle: 'italic' as const, padding: '1.5rem 0',
+                        textAlign: 'center' as const,
+                      },
+                    }, 'Start writing to see a preview'),
+              ),
+
+              // Media preview
+              (selectedMediaIds.length > 0 || (mediaUrl && showMedia)) && h('div', {
+                style: { padding: '0 0 0' },
+              },
+                ...selectedMediaIds.map((id: string) => {
+                  const item = mediaLibrary.find((m: any) => m.id === id);
+                  if (!item) return null;
+                  return item.mimeType?.startsWith('video/')
+                    ? h('div', {
+                        key: id,
+                        style: {
+                          background: 'rgba(0,0,0,0.4)',
+                          padding: '1.5rem', textAlign: 'center' as const,
+                          color: 'var(--ck-text-secondary)', fontSize: '0.85rem',
+                        },
+                      }, `\ud83c\udfa5 ${item.filename}`)
+                    : h('img', {
+                        key: id,
+                        src: item.thumbnailDataUrl || item.url,
+                        style: { width: '100%', display: 'block' },
+                      });
+                }),
+                mediaUrl && showMedia && h('img', {
+                  src: mediaUrl,
+                  style: { width: '100%', display: 'block' },
+                  onError: (e: any) => { e.target.style.display = 'none'; },
+                }),
+              ),
+
+              // Engagement bar (fake social actions)
+              h('div', {
+                style: {
+                  display: 'flex', justifyContent: 'space-around',
+                  padding: '0.6rem 1rem', borderTop: '1px solid rgba(255,255,255,0.06)',
+                  fontSize: '0.8rem', color: 'var(--ck-text-tertiary)',
+                },
+              },
+                h('span', null, '❤\ufe0f 0'),
+                h('span', null, '\ud83d\udcac 0'),
+                h('span', null, '\ud83d\udd01 0'),
+                h('span', null, '\ud83d\udcca 0'),
+              ),
+            ),
+
+            // Platform pills below card
+            selectedPlatforms.length > 0 && h('div', {
+              style: { display: 'flex', flexWrap: 'wrap' as const, gap: '0.35rem', marginTop: '0.75rem' },
+            },
               ...selectedPlatforms.map((pl) => {
                 const drv = drivers.find((d) => d.platform === pl);
                 return h('span', {
                   key: pl,
                   style: {
-                    background: 'rgba(127,90,240,0.15)', border: '1px solid rgba(127,90,240,0.3)',
-                    borderRadius: '999px', padding: '0.12rem 0.45rem', fontSize: '0.72rem',
+                    background: 'rgba(127,90,240,0.12)', border: '1px solid rgba(127,90,240,0.25)',
+                    borderRadius: '999px', padding: '0.1rem 0.4rem', fontSize: '0.7rem',
                     color: 'var(--ck-text-secondary)',
                   },
                 }, drv ? `${drv.icon} ${drv.label}` : pl);
               }),
             ),
 
-            // Scheduling info
-            scheduledAt && h('div', {
-              className: 'text-xs mb-3',
-              style: { color: 'rgba(251,191,36,0.85)' },
-            }, `⏱ Scheduled: ${new Date(scheduledAt).toLocaleString()}`),
-
-            // Content preview
-            content.trim()
-              ? h('div', {
-                  style: {
-                    background: 'rgba(255,255,255,0.03)', border: '1px solid var(--ck-border-subtle)',
-                    borderRadius: '10px', padding: '0.85rem',
-                    whiteSpace: 'pre-wrap' as const, fontSize: '0.85rem',
-                    color: 'var(--ck-text-primary)', lineHeight: '1.55',
-                    maxHeight: '300px', overflowY: 'auto' as const,
-                    wordBreak: 'break-word' as const,
-                  },
-                }, content)
-              : h('div', {
-                  style: {
-                    color: 'var(--ck-text-tertiary)', fontSize: '0.85rem',
-                    fontStyle: 'italic' as const, padding: '2rem 0.5rem',
-                    textAlign: 'center' as const,
-                  },
-                }, 'Start writing to see a preview'),
-
-            // Media preview (selected library items + URL)
-            (selectedMediaIds.length > 0 || (mediaUrl && showMedia)) && h('div', { className: 'mt-3 space-y-2' },
-              ...selectedMediaIds.map((id: string) => {
-                const item = mediaLibrary.find((m: any) => m.id === id);
-                if (!item) return null;
-                return item.mimeType?.startsWith('video/')
-                  ? h('div', {
-                      key: id,
-                      style: {
-                        background: 'rgba(0,0,0,0.3)', borderRadius: '8px',
-                        border: '1px solid var(--ck-border-subtle)',
-                        padding: '1rem', textAlign: 'center' as const,
-                        color: 'var(--ck-text-secondary)', fontSize: '0.8rem',
-                      },
-                    }, `\ud83c\udfa5 ${item.filename}`)
-                  : h('img', {
-                      key: id,
-                      src: item.thumbnailDataUrl || item.url,
-                      style: {
-                        maxWidth: '100%', borderRadius: '8px',
-                        border: '1px solid var(--ck-border-subtle)',
-                      },
-                    });
-              }),
-              mediaUrl && showMedia && h('img', {
-                src: mediaUrl,
-                style: {
-                  maxWidth: '100%', borderRadius: '8px',
-                  border: '1px solid var(--ck-border-subtle)',
-                },
-                onError: (e: any) => { e.target.style.display = 'none'; },
-              }),
-            ),
-
             // Character limit bar
-            charLimit && content.length > 0 && h('div', { className: 'mt-3' },
-              h('div', { style: { height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' } },
+            charLimit && content.length > 0 && h('div', { style: { marginTop: '0.75rem' } },
+              h('div', { style: { height: '3px', borderRadius: '2px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' } },
                 h('div', {
                   style: {
                     height: '100%', borderRadius: '2px',
@@ -758,10 +806,9 @@
                 }),
               ),
               h('div', {
-                className: 'text-xs mt-1',
                 style: {
+                  fontSize: '0.7rem', marginTop: '0.2rem', textAlign: 'right' as const,
                   color: content.length > charLimit ? 'rgba(248,113,113,0.9)' : 'var(--ck-text-tertiary)',
-                  textAlign: 'right' as const,
                 },
               }, `${content.length} / ${charLimit}`),
             ),
