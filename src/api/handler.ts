@@ -66,13 +66,46 @@ function getBackendSources(req: PluginRequest, teamId: string): BackendSources {
   // Gateway channels
   try {
     const configPath = join(homedir(), '.openclaw', 'openclaw.json');
-    // Also try json5 variant
     const configPath5 = join(homedir(), '.openclaw', 'openclaw.json5');
     const actualPath = existsSync(configPath) ? configPath : existsSync(configPath5) ? configPath5 : null;
     if (actualPath) {
-      // Strip json5 comments for safe parsing
-      const raw = readFileSync(actualPath, 'utf8').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-      const cfg = JSON.parse(raw);
+      const raw = readFileSync(actualPath, 'utf8');
+      // Try plain JSON first; only strip comments (string-safe) if that fails
+      let cfg: any;
+      try {
+        cfg = JSON.parse(raw);
+      } catch {
+        // Strip line comments only when NOT inside a JSON string.
+        // Walk char by char to respect quoted regions.
+        let cleaned = '';
+        let inStr = false;
+        let escape = false;
+        for (let i = 0; i < raw.length; i++) {
+          const ch = raw[i];
+          if (escape) { cleaned += ch; escape = false; continue; }
+          if (inStr) {
+            if (ch === '\\') { escape = true; cleaned += ch; continue; }
+            if (ch === '"') inStr = false;
+            cleaned += ch;
+            continue;
+          }
+          if (ch === '"') { inStr = true; cleaned += ch; continue; }
+          if (ch === '/' && raw[i + 1] === '/') {
+            // Skip to end of line
+            while (i < raw.length && raw[i] !== '\n') i++;
+            cleaned += '\n';
+            continue;
+          }
+          if (ch === '/' && raw[i + 1] === '*') {
+            i += 2;
+            while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i++;
+            i++; // skip the closing '/'
+            continue;
+          }
+          cleaned += ch;
+        }
+        cfg = JSON.parse(cleaned);
+      }
       const plugins = cfg?.plugins?.entries || {};
       const channels: string[] = [];
       if (plugins.discord?.enabled) channels.push('discord');
