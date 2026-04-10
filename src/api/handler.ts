@@ -57,6 +57,11 @@ function getUserId(req: PluginRequest): string {
 async function getBackendSources(req: PluginRequest, teamId: string): Promise<BackendSources> {
   const sources: BackendSources = {};
 
+  // Kitchen base URL for resolving local media paths during Postiz uploads
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost:7777';
+  sources.kitchenBaseUrl = process.env['CK_BASE_URL'] || `${proto}://${host}`;
+
   // Postiz — check header first, then fall back to DB-stored config
   const postizKey = req.query.postizApiKey || req.headers['x-postiz-api-key'];
   if (postizKey) {
