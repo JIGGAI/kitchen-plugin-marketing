@@ -50,6 +50,7 @@ export function createDriver(platform: string, config: DriverConfig): PostingDri
  */
 export interface BackendSources {
   postiz?: { apiKey: string; baseUrl: string };
+  kitchenBaseUrl?: string;
   gatewayChannels?: string[]; // ['discord', 'telegram']
   storedAccounts?: Array<{
     platform: string;
@@ -90,6 +91,7 @@ export function createAllDrivers(sources: BackendSources): PostingDriver[] {
       if (!platform) continue;
 
       const config: DriverConfig = {
+        kitchenBaseUrl: sources.kitchenBaseUrl,
         postiz: {
           apiKey: sources.postiz.apiKey,
           baseUrl: sources.postiz.baseUrl,
@@ -107,7 +109,7 @@ export function createAllDrivers(sources: BackendSources): PostingDriver[] {
   // Phase 2: Create drivers for non-Postiz backends (gateway, direct)
   //          and any platforms not covered by Postiz integrations above.
   for (const platform of platforms) {
-    const config: DriverConfig = {};
+    const config: DriverConfig = { kitchenBaseUrl: sources.kitchenBaseUrl };
     let needsDriver = false;
 
     // Postiz fallback (only if we didn't already create per-integration drivers)

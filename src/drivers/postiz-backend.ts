@@ -68,6 +68,29 @@ export function resolvePostizType(identifier: string): string {
   return identifier.toLowerCase();
 }
 
+/** Upload a file to Postiz and return the public URL (uploads.postiz.com). */
+export async function postizUpload(
+  config: PostizConfig,
+  fileBuffer: Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<{ success: boolean; path?: string; id?: string; error?: string }> {
+  const form = new FormData();
+  form.append('file', new Blob([fileBuffer], { type: mimeType }), filename);
+
+  const res = await fetch(`${config.baseUrl}/upload`, {
+    method: 'POST',
+    headers: { 'Authorization': config.apiKey },
+    body: form,
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    return { success: false, error: data?.message || `Postiz upload error ${res.status}` };
+  }
+  return { success: true, path: data?.path, id: data?.id };
+}
+
 /** Create a post via Postiz (v1 posts API) */
 export async function postizPublish(
   config: PostizConfig,

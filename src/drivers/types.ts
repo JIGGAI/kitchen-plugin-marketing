@@ -57,6 +57,8 @@ export interface PostingDriver {
 
 /** Configuration passed to driver constructors */
 export interface DriverConfig {
+  /** Kitchen base URL for resolving local media paths (e.g. http://100.103.210.102:7777) */
+  kitchenBaseUrl?: string;
   postiz?: {
     apiKey: string;
     baseUrl: string;

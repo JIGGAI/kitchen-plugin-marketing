@@ -3,7 +3,7 @@
  * Tries backends in order: Postiz → Gateway → Direct → none
  */
 import type { PostingDriver, PostContent, PostResult, DriverCapabilities, DriverStatus, DriverConfig } from './types';
-import { getPostizIntegrations, postizPublish, type PostizConfig } from './postiz-backend';
+import { getPostizIntegrations, postizPublish, postizUpload, type PostizConfig } from './postiz-backend';
 
 export abstract class BaseDriver implements PostingDriver {
   abstract readonly platform: string;
@@ -150,9 +150,41 @@ export abstract class BaseDriver implements PostingDriver {
     const integrationId = this._postizIntegrationId || cfg.integrationId;
     if (!integrationId) return { success: false, error: 'No Postiz integration found for ' + this.platform };
 
+    // Upload local media to Postiz before publishing.
+    // Postiz requires URLs on uploads.postiz.com — Kitchen-local paths won't work.
+    let resolvedMediaUrls = content.mediaUrls;
+    if (resolvedMediaUrls?.length) {
+      const uploaded: string[] = [];
+      for (const url of resolvedMediaUrls) {
+        if (url.startsWith('https://uploads.postiz.com')) {
+          uploaded.push(url);
+          continue;
+        }
+        // Local Kitchen path or relative URL — fetch the file and upload to Postiz
+        try {
+          const fetchUrl = url.startsWith('/') ? `${this.config.kitchenBaseUrl || 'http://localhost:7777'}${url}` : url;
+          const res = await fetch(fetchUrl);
+          if (!res.ok) {
+            return { success: false, error: `Failed to fetch media for Postiz upload: ${url} (${res.status})` };
+          }
+          const buf = Buffer.from(await res.arrayBuffer());
+          const filename = url.split('/').pop()?.split('?')[0] || 'media.png';
+          const mime = res.headers.get('content-type')?.split(';')[0] || 'image/png';
+          const uploadResult = await postizUpload(cfg, buf, filename, mime);
+          if (!uploadResult.success || !uploadResult.path) {
+            return { success: false, error: `Postiz media upload failed: ${uploadResult.error || 'no path returned'}` };
+          }
+          uploaded.push(uploadResult.path);
+        } catch (e) {
+          return { success: false, error: `Media upload to Postiz failed: ${e instanceof Error ? e.message : String(e)}` };
+        }
+      }
+      resolvedMediaUrls = uploaded;
+    }
+
     const result = await postizPublish(cfg, integrationId, content.text, {
       scheduledAt: content.scheduledAt,
-      mediaUrls: content.mediaUrls,
+      mediaUrls: resolvedMediaUrls,
       settings: content.settings,
       platformIdentifier: this._postizIdentifier || this.postizProvider,
     });
