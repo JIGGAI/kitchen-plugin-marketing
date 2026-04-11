@@ -4,6 +4,7 @@
  */
 import type { PostingDriver, PostContent, PostResult, DriverCapabilities, DriverStatus, DriverConfig } from './types';
 import { getPostizIntegrations, postizPublish, postizUpload, type PostizConfig } from './postiz-backend';
+import { tryResolveLocalMedia } from './resolve-local-media';
 
 export abstract class BaseDriver implements PostingDriver {
   abstract readonly platform: string;
@@ -160,16 +161,36 @@ export abstract class BaseDriver implements PostingDriver {
           uploaded.push(url);
           continue;
         }
-        // Local Kitchen path or relative URL — fetch the file and upload to Postiz
+        // Local Kitchen path or relative URL — fetch the file and upload to Postiz.
+        //
+        // Fast path: if this is a Kitchen plugin media URL (i.e. hosted by
+        // the same plugin instance this driver is running in), read the
+        // bytes directly from the plugin's media store on disk. This avoids
+        // a server-to-itself HTTP hairpin that fails on deployments where
+        // the Kitchen plugin only binds to a non-loopback IP.
         try {
-          const fetchUrl = url.startsWith('/') ? `${this.config.kitchenBaseUrl || 'http://localhost:7777'}${url}` : url;
-          const res = await fetch(fetchUrl);
-          if (!res.ok) {
-            return { success: false, error: `Failed to fetch media for Postiz upload: ${url} (${res.status})` };
+          let buf: Buffer;
+          let filename: string;
+          let mime: string;
+
+          const localMedia = tryResolveLocalMedia(url);
+          if (localMedia) {
+            buf = localMedia.bytes;
+            filename = localMedia.filename;
+            mime = localMedia.mimeType;
+          } else {
+            // Fall back to HTTP for remote URLs or when the local resolver
+            // can't find the row/file.
+            const fetchUrl = url.startsWith('/') ? `${this.config.kitchenBaseUrl || 'http://localhost:7777'}${url}` : url;
+            const res = await fetch(fetchUrl);
+            if (!res.ok) {
+              return { success: false, error: `Failed to fetch media for Postiz upload: ${url} (${res.status})` };
+            }
+            buf = Buffer.from(await res.arrayBuffer());
+            filename = url.split('/').pop()?.split('?')[0] || 'media.png';
+            mime = res.headers.get('content-type')?.split(';')[0] || 'image/png';
           }
-          const buf = Buffer.from(await res.arrayBuffer());
-          const filename = url.split('/').pop()?.split('?')[0] || 'media.png';
-          const mime = res.headers.get('content-type')?.split(';')[0] || 'image/png';
+
           const uploadResult = await postizUpload(cfg, buf, filename, mime);
           if (!uploadResult.success || !uploadResult.path) {
             return { success: false, error: `Postiz media upload failed: ${uploadResult.error || 'no path returned'}` };
