@@ -2,6 +2,26 @@
 
 A comprehensive marketing suite plugin for ClawKitchen that provides content management, scheduling, analytics, and social media integration.
 
+## Installation
+
+### Via Kitchen CLI
+```bash
+openclaw kitchen plugins install @jiggai/kitchen-plugin-marketing
+```
+
+### Via NPM
+```bash
+npm install @jiggai/kitchen-plugin-marketing
+```
+
+### Manual Installation
+```bash
+cd /path/to/clawkitchen
+npm install @jiggai/kitchen-plugin-marketing
+npm run build
+# Restart gateway
+```
+
 ## Features
 
 ### 🎯 **Complete API Access**
@@ -126,26 +146,6 @@ GET /api/plugins/kitchen-plugin-marketing/calendar/scheduled
 
 # Reschedule post
 PUT /api/plugins/kitchen-plugin-marketing/calendar/scheduled/{id}
-```
-
-## Installation
-
-### Via NPM
-```bash
-npm install kitchen-plugin-marketing
-```
-
-### Via Kitchen CLI (when CLI commands are available)
-```bash
-openclaw kitchen plugin add kitchen-plugin-marketing
-```
-
-### Manual Installation
-```bash
-cd /path/to/clawkitchen
-npm install kitchen-plugin-marketing
-npm run build
-# Restart gateway
 ```
 
 ## Development
