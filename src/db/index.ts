@@ -1,7 +1,4 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { createHash, createCipher, createDecipher } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
@@ -15,10 +12,17 @@ export function createDatabase(teamId: string) {
   const dbPath = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing');
   if (!existsSync(dbPath)) mkdirSync(dbPath, { recursive: true });
   const teamDbFile = join(dbPath, `marketing-${teamId}.db`);
-  
+
+  // Lazy-load sqlite bindings so the plugin module can be discovered without
+  // requiring the native dependency during top-level evaluation.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Database = require('better-sqlite3');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { drizzle } = require('drizzle-orm/better-sqlite3');
+
   const sqlite = new Database(teamDbFile);
   const db = drizzle(sqlite, { schema });
-  
+
   return { db, sqlite };
 }
 
@@ -51,8 +55,10 @@ export function decryptCredentials(encryptedData: Buffer): object {
 // Database initialization
 export function initializeDatabase(teamId: string) {
   const { db, sqlite } = createDatabase(teamId);
-  
-  // Run migrations — resolve relative to the plugin package, not CWD
+
+  // Run migrations, resolving relative to the plugin package, not CWD.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { migrate } = require('drizzle-orm/better-sqlite3/migrator');
   try {
     const migrationsDir = join(PLUGIN_ROOT, 'db', 'migrations');
     migrate(db, { migrationsFolder: migrationsDir });
