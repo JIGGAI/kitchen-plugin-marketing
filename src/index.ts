@@ -32,5 +32,5 @@ export const pluginMeta = {
   id: 'marketing',
   name: 'Marketing Suite',
   version: '0.2.0',
-  teamTypes: ['marketing-team', 'claw-marketing-team'],
+  teamTypes: ['marketing-team'],
 };

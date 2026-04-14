@@ -193,7 +193,7 @@ Each plugin gets an isolated SQLite database with encrypted credentials storage.
 - No cross-plugin data access
 
 ### Integration Points
-- **Team Detection**: Automatically shows for teams with `marketing-team` or `claw-marketing-team` frontmatter
+- **Team Detection**: Available when installed, and can be enabled per team from the Kitchen Plugins tab. The plugin advertises support for `marketing-team`.
 - **Kitchen Auth**: Uses existing Kitchen authentication
 - **API Discovery**: All endpoints automatically available via Kitchen's plugin router
 
