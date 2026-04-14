@@ -12,8 +12,7 @@ const PLUGIN_ROOT = dirname(dirname(__dirname)); // dist/db/index.js → plugin 
 
 // Database connection with team isolation
 export function createDatabase(teamId: string) {
-  const dbPath = process.env.KITCHEN_PLUGIN_DB_PATH
-    || join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing');
+  const dbPath = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing');
   if (!existsSync(dbPath)) mkdirSync(dbPath, { recursive: true });
   const teamDbFile = join(dbPath, `marketing-${teamId}.db`);
   
@@ -23,8 +22,10 @@ export function createDatabase(teamId: string) {
   return { db, sqlite };
 }
 
-// Encryption utilities for sensitive data
-const ENCRYPTION_KEY = process.env.KITCHEN_ENCRYPTION_KEY || 'fallback-key-change-in-production';
+// Encryption utilities for sensitive data.
+// Keep the legacy fallback key for compatibility with already-stored records,
+// but do not read from process env anymore.
+const ENCRYPTION_KEY = 'fallback-key-change-in-production';
 
 export function encryptCredentials(credentials: object): Buffer {
   const plaintext = JSON.stringify(credentials);
