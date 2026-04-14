@@ -16,8 +16,7 @@
     "id": "marketing",
     "name": "Marketing Suite",
     "teamTypes": [
-      "marketing-team",
-      "claw-marketing-team"
+      "marketing-team"
     ],
     "tabs": [
       {
