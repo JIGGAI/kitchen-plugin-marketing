@@ -85,7 +85,7 @@ export function startGenerationJob(
 
   db.insert(schema.generationJobs).values(jobRecord).run();
 
-  runGeneration(teamId, jobId, sourcePath, mediaItem.originalName, request, userId)
+  runGeneration(teamId, jobId, sourceMediaId, sourcePath, mediaItem.originalName, request, userId)
     .catch(() => {});
 
   return jobToResponse(jobRecord as schema.GenerationJob);
@@ -94,6 +94,7 @@ export function startGenerationJob(
 async function runGeneration(
   teamId: string,
   jobId: string,
+  sourceMediaId: string,
   sourcePath: string,
   sourceFilename: string,
   request: GenerationRequest,
