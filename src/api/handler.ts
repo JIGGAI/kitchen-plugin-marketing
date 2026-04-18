@@ -555,6 +555,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       if (body.status !== undefined) updates.status = body.status;
       if (body.scheduledAt !== undefined) updates.scheduledAt = body.scheduledAt || null;
       if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
+      if ((body as any).mediaIds !== undefined) updates.mediaIds = JSON.stringify((body as any).mediaIds);
       await db.update(schema.posts).set(updates).where(eq(schema.posts.id, singlePostMatch[1]));
       return { status: 200, data: { updated: true, id: singlePostMatch[1] } };
     } catch (error: any) {
