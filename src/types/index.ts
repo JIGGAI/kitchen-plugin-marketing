@@ -203,3 +203,6 @@ export interface QueryParams {
   sortOrder?: 'asc' | 'desc';
   [key: string]: any;
 }
+
+// Generation
+export type { GenerationRequest, GenerationJobResponse } from '../generation/types';

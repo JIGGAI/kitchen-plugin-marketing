@@ -64,17 +64,20 @@ export function initializeDatabase(teamId: string) {
     migrate(db, { migrationsFolder: migrationsDir });
   } catch (error: any) {
     // Fallback: run SQL directly if drizzle migrator fails (missing journal etc.)
-    try {
-      const sqlPath = join(PLUGIN_ROOT, 'db', 'migrations', '0001_initial.sql');
-      if (existsSync(sqlPath)) {
-        const sql = require('fs').readFileSync(sqlPath, 'utf8');
-        // Split on semicolons and run each statement
-        const statements = sql.split(';').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
-        for (const stmt of statements) {
-          try { sqlite.exec(stmt + ';'); } catch { /* ignore IF NOT EXISTS collisions */ }
+    const migrationFiles = ['0001_initial.sql', '0002_generation_jobs.sql'];
+    for (const migrationFile of migrationFiles) {
+      try {
+        const sqlPath = join(PLUGIN_ROOT, 'db', 'migrations', migrationFile);
+        if (existsSync(sqlPath)) {
+          const sql = require('fs').readFileSync(sqlPath, 'utf8');
+          // Split on semicolons and run each statement
+          const statements = sql.split(';').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+          for (const stmt of statements) {
+            try { sqlite.exec(stmt + ';'); } catch { /* ignore IF NOT EXISTS collisions */ }
+          }
         }
-      }
-    } catch { /* last resort failed */ }
+      } catch { /* ignore individual migration failures */ }
+    }
   }
   
   return { db, sqlite };
