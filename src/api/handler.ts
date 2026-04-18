@@ -693,7 +693,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .limit(limit)
         .offset(offset);
 
-      // For listing, include a small data URL thumbnail for images
+      // For listing, include a small data URL thumbnail for images (and videos with stored thumbnails)
       const data = items.map((m) => {
         let thumbnailDataUrl: string | undefined;
         if (m.mimeType.startsWith('image/')) {
@@ -705,6 +705,9 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
               thumbnailDataUrl = `data:${m.mimeType};base64,${raw.toString('base64')}`;
             }
           }
+        } else if (m.thumbnailUrl?.startsWith('data:')) {
+          // Video with a stored thumbnail data URL (extracted during generation)
+          thumbnailDataUrl = m.thumbnailUrl;
         }
         return {
           id: m.id,
