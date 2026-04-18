@@ -16,7 +16,7 @@ fs.mkdirSync(distDir, { recursive: true });
 fs.mkdirSync(path.join(distDir, 'api'), { recursive: true });
 fs.mkdirSync(path.join(distDir, 'tabs'), { recursive: true });
 
-const externals = '--external:better-sqlite3 --external:drizzle-orm --external:drizzle-orm/* --external:express --external:multer --external:crypto --external:path --external:fs --external:fs/promises --external:node:crypto';
+const externals = '--external:better-sqlite3 --external:drizzle-orm --external:drizzle-orm/* --external:express --external:multer --external:crypto --external:path --external:fs --external:fs/promises --external:node:crypto --external:child_process --external:os';
 
 try {
   // 1. Build main entry point

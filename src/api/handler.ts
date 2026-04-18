@@ -8,6 +8,8 @@ import { initializeDatabase, encryptCredentials, decryptCredentials } from '../d
 import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import { getPostizIntegrations } from '../drivers/postiz-backend';
+import { startGenerationJob, getJob } from '../generation/runner';
+import type { GenerationRequest } from '../generation/types';
 import type {
   ApiError,
   PaginatedResponse,
@@ -862,6 +864,34 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to save config');
     }
+  }
+
+  // ---- POST /media/:id/generate (start async generation job) ----
+  const generateMatch = req.path.match(/^\/media\/([a-f0-9-]+)\/generate$/);
+  if (generateMatch && req.method === 'POST') {
+    try {
+      const body = req.body as GenerationRequest | undefined;
+      if (!body?.prompt || !body?.type) {
+        return apiError(400, 'VALIDATION_ERROR', 'prompt and type (image|video) are required');
+      }
+      if (body.type !== 'image' && body.type !== 'video') {
+        return apiError(400, 'VALIDATION_ERROR', 'type must be "image" or "video"');
+      }
+      const userId = getUserId(req);
+      const job = startGenerationJob(teamId, generateMatch[1], body, userId);
+      return { status: 202, data: { job } };
+    } catch (error: any) {
+      const status = error?.message?.includes('not found') ? 404 : 400;
+      return apiError(status, 'GENERATION_ERROR', error?.message || 'Failed to start generation');
+    }
+  }
+
+  // ---- GET /jobs/:id (poll generation job status) ----
+  const jobMatch = req.path.match(/^\/jobs\/([a-f0-9-]+)$/);
+  if (jobMatch && req.method === 'GET') {
+    const job = getJob(teamId, jobMatch[1]);
+    if (!job) return apiError(404, 'NOT_FOUND', 'Job not found');
+    return { status: 200, data: { job } };
   }
 
   return apiError(501, 'NOT_IMPLEMENTED', `No handler for ${req.method} ${req.path}`);
