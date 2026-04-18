@@ -178,6 +178,15 @@ async function runGeneration(
     }
 
     const baseName = sourceFilename.replace(/\.[^.]+$/, '');
+    // Count existing derivatives to increment the name
+    const existingDerivatives = db
+      .select()
+      .from(schema.media)
+      .where(and(eq(schema.media.teamId, teamId)))
+      .all()
+      .filter((m) => m.originalName?.startsWith(baseName + '-generated'));
+    const version = existingDerivatives.length + 1;
+    const versionSuffix = version === 1 ? '' : `-${version}`;
     const newMediaId = randomUUID();
     const mediaDir = join(MEDIA_DIR, teamId);
     mkdirSync(mediaDir, { recursive: true });
@@ -243,7 +252,7 @@ async function runGeneration(
       id: newMediaId,
       teamId,
       filename: storedFilename,
-      originalName: `${baseName}-generated${storedExt}`,
+      originalName: `${baseName}-generated${versionSuffix}${storedExt}`,
       mimeType: finalMime,
       size: fileBuffer.length,
       width: null,
