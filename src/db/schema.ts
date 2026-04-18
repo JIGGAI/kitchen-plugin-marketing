@@ -114,6 +114,22 @@ export const webhooks = sqliteTable('webhooks', {
   lastTriggered: text('last_triggered'),
 });
 
+// Generation jobs table (async image/video generation tracking)
+export const generationJobs = sqliteTable('generation_jobs', {
+  id: text('id').primaryKey(),
+  teamId: text('team_id').notNull(),
+  sourceMediaId: text('source_media_id').notNull(),
+  type: text('type').notNull(), // 'image' or 'video'
+  provider: text('provider').notNull(), // 'gemini' or 'klingai'
+  prompt: text('prompt').notNull(),
+  status: text('status').notNull(), // 'running', 'completed', 'failed'
+  config: text('config'), // JSON object
+  generatedMediaId: text('generated_media_id'), // FK to media.id on completion
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  completedAt: text('completed_at'),
+});
+
 // Relations
 export const postsRelations = relations(posts, ({ many }) => ({
   metrics: many(postMetrics),
@@ -151,3 +167,5 @@ export type AccountMetrics = typeof accountMetrics.$inferSelect;
 export type NewAccountMetrics = typeof accountMetrics.$inferInsert;
 export type Webhook = typeof webhooks.$inferSelect;
 export type NewWebhook = typeof webhooks.$inferInsert;
+export type GenerationJob = typeof generationJobs.$inferSelect;
+export type NewGenerationJob = typeof generationJobs.$inferInsert;
