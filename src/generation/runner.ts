@@ -127,7 +127,7 @@ async function runGeneration(
       'ai-generated',
       request.type === 'video' ? 'video' : 'derived',
       `source:${request.provider || (request.type === 'image' ? 'gemini' : 'klingai')}`,
-      `source-media:${jobId.split('-')[0]}`,
+      `source-media:${sourceMediaId}`,
     ]);
 
     db.insert(schema.media).values({

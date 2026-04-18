@@ -71,12 +71,10 @@ export async function generateImage(
   config?: Record<string, unknown>,
 ): Promise<DriverResult> {
   const configEnv = loadConfigEnv();
-  if (!configEnv.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not configured. Set it in ~/.config/openclaw/env');
-  }
 
   mkdirSync(outputDir, { recursive: true });
 
+  // Try nano-banana-pro skill first (may have its own auth)
   const skillDir = findSkillDir('nano-banana-pro');
   if (skillDir) {
     const scriptPath = join(skillDir, 'scripts', 'generate_image.py');
@@ -106,7 +104,10 @@ export async function generateImage(
     }
   }
 
-  // Fallback: direct Gemini API
+  // Fallback: direct Gemini API (requires GEMINI_API_KEY)
+  if (!configEnv.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured. Set it in ~/.config/openclaw/env');
+  }
   const sourceBuffer = await readFile(sourcePath);
   const sourceBase64 = sourceBuffer.toString('base64');
   const ext = extname(sourcePath).toLowerCase();
