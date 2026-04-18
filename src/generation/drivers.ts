@@ -216,3 +216,56 @@ export async function generateVideo(
 
   return { filePath: videoPath, metadata: { skill: 'klingai', prompt } };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Text-to-image generation (no source image required)               */
+/* ------------------------------------------------------------------ */
+
+export async function generateImageFromPrompt(
+  prompt: string,
+  outputDir: string,
+  config?: Record<string, unknown>,
+): Promise<DriverResult> {
+  const configEnv = loadConfigEnv();
+  if (!configEnv.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured. Set it in ~/.config/openclaw/env');
+  }
+
+  mkdirSync(outputDir, { recursive: true });
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${configEnv.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: `Generate this image: ${prompt}` },
+          ],
+        }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    throw new Error(`Gemini API error (${response.status}): ${errBody.slice(0, 500)}`);
+  }
+
+  const result = await response.json();
+  for (const candidate of result.candidates || []) {
+    for (const part of candidate.content?.parts || []) {
+      if (part.inlineData?.data) {
+        const outMime = part.inlineData.mimeType || 'image/png';
+        const outExt = outMime.includes('jpeg') ? '.jpg' : outMime.includes('webp') ? '.webp' : '.png';
+        const outPath = join(outputDir, `generated${outExt}`);
+        await writeFile(outPath, Buffer.from(part.inlineData.data, 'base64'));
+        return { filePath: outPath, metadata: { skill: 'gemini-text-to-image', prompt } };
+      }
+    }
+  }
+
+  throw new Error('Gemini returned no image data in the response');
+}

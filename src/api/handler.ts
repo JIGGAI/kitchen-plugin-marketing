@@ -8,7 +8,7 @@ import { initializeDatabase, encryptCredentials, decryptCredentials } from '../d
 import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import { getPostizIntegrations } from '../drivers/postiz-backend';
-import { startGenerationJob, getJob } from '../generation/runner';
+import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import type {
   ApiError,
@@ -870,7 +870,28 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
-  // ---- POST /media/:id/generate (start async generation job) ----
+  // ---- POST /media/generate (prompt-only text-to-image, no source required) ----
+  if (req.path === '/media/generate' && req.method === 'POST') {
+    try {
+      const body = req.body as (GenerationRequest & { filename?: string }) | undefined;
+      if (!body?.prompt) {
+        return apiError(400, 'VALIDATION_ERROR', 'prompt is required');
+      }
+      const userId = getUserId(req);
+      const job = startPromptGenerationJob(teamId, {
+        prompt: body.prompt,
+        type: 'image',
+        provider: body.provider,
+        config: body.config,
+        filename: body.filename,
+      }, userId);
+      return { status: 202, data: { job } };
+    } catch (error: any) {
+      return apiError(400, 'GENERATION_ERROR', error?.message || 'Failed to start generation');
+    }
+  }
+
+  // ---- POST /media/:id/generate (start async generation job from source) ----
   const generateMatch = req.path.match(/^\/media\/([a-f0-9-]+)\/generate$/);
   if (generateMatch && req.method === 'POST') {
     try {
