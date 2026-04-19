@@ -6,7 +6,7 @@ import { execFile } from 'child_process';
 import { eq, and } from 'drizzle-orm';
 import { initializeDatabase } from '../db';
 import * as schema from '../db/schema';
-import { generateImage, generateVideo } from './drivers';
+import { generateImage, generateVideo, generateImageFromPrompt } from './drivers';
 import type { GenerationRequest, GenerationJobResponse } from './types';
 
 const MEDIA_DIR = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing', 'media');
@@ -155,6 +155,134 @@ export function startGenerationJob(
   return jobToResponse(jobRecord as schema.GenerationJob);
 }
 
+export function startPromptGenerationJob(
+  teamId: string,
+  request: GenerationRequest & { filename?: string },
+  userId: string,
+): GenerationJobResponse {
+  const { db } = initializeDatabase(teamId);
+
+  if (request.type !== 'image') {
+    throw new Error('Prompt-only generation currently supports image type only. Video requires a source image.');
+  }
+
+  const provider = request.provider || 'gemini';
+  const jobId = randomUUID();
+  const now = new Date().toISOString();
+
+  const jobRecord: schema.NewGenerationJob = {
+    id: jobId,
+    teamId,
+    sourceMediaId: 'prompt-only',
+    type: request.type,
+    provider,
+    prompt: request.prompt,
+    status: 'running',
+    config: request.config ? JSON.stringify(request.config) : null,
+    generatedMediaId: null,
+    error: null,
+    createdAt: now,
+    completedAt: null,
+  };
+
+  db.insert(schema.generationJobs).values(jobRecord).run();
+
+  const filename = request.filename || 'generated-image';
+  runPromptGeneration(teamId, jobId, filename, request, userId)
+    .catch(() => {});
+
+  return jobToResponse(jobRecord as schema.GenerationJob);
+}
+
+async function runPromptGeneration(
+  teamId: string,
+  jobId: string,
+  filename: string,
+  request: GenerationRequest,
+  userId: string,
+): Promise<void> {
+  const { db } = initializeDatabase(teamId);
+  const outputDir = join(tmpdir(), `mktg-gen-${jobId}`);
+  mkdirSync(outputDir, { recursive: true });
+
+  try {
+    const result = await generateImageFromPrompt(request.prompt, outputDir, request.config);
+
+    if (!existsSync(result.filePath)) {
+      throw new Error(`Generated file not found at ${result.filePath}`);
+    }
+
+    const baseName = filename.replace(/\.[^.]+$/, '');
+    const existingCount = db
+      .select()
+      .from(schema.media)
+      .where(and(eq(schema.media.teamId, teamId)))
+      .all()
+      .filter((m) => m.originalName?.startsWith(baseName)).length;
+    const versionSuffix = existingCount > 0 ? `-${existingCount + 1}` : '';
+
+    const quality = getCompressionQuality(teamId);
+    let finalPath = result.filePath;
+    try {
+      const compressedPath = await compressImage(result.filePath, outputDir, quality);
+      if (statSync(compressedPath).size < statSync(result.filePath).size) {
+        finalPath = compressedPath;
+      }
+    } catch { /* use original */ }
+
+    const newMediaId = randomUUID();
+    const storedFilename = `${newMediaId}.jpg`;
+    const mediaDir = join(MEDIA_DIR, teamId);
+    mkdirSync(mediaDir, { recursive: true });
+
+    const fileBuffer = readFileSync(finalPath);
+    writeFileSync(join(mediaDir, storedFilename), fileBuffer);
+
+    const now = new Date().toISOString();
+    const tags = JSON.stringify([
+      'ai-generated',
+      'text-to-image',
+      `source:${request.provider || 'gemini'}`,
+    ]);
+
+    db.insert(schema.media).values({
+      id: newMediaId,
+      teamId,
+      filename: storedFilename,
+      originalName: `${baseName}${versionSuffix}.jpg`,
+      mimeType: 'image/jpeg',
+      size: fileBuffer.length,
+      width: null,
+      height: null,
+      alt: null,
+      tags,
+      url: `/api/plugins/marketing/media/${newMediaId}/file?team=${encodeURIComponent(teamId)}`,
+      thumbnailUrl: null,
+      createdAt: now,
+      createdBy: userId,
+    }).run();
+
+    db.update(schema.generationJobs)
+      .set({
+        status: 'completed',
+        generatedMediaId: newMediaId,
+        completedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.generationJobs.id, jobId))
+      .run();
+
+  } catch (error: any) {
+    db.update(schema.generationJobs)
+      .set({
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        completedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.generationJobs.id, jobId))
+      .run();
+  }
+}
+
 async function runGeneration(
   teamId: string,
   jobId: string,
@@ -178,6 +306,15 @@ async function runGeneration(
     }
 
     const baseName = sourceFilename.replace(/\.[^.]+$/, '');
+    // Count existing derivatives to increment the name
+    const existingDerivatives = db
+      .select()
+      .from(schema.media)
+      .where(and(eq(schema.media.teamId, teamId)))
+      .all()
+      .filter((m) => m.originalName?.startsWith(baseName + '-generated'));
+    const version = existingDerivatives.length + 1;
+    const versionSuffix = version === 1 ? '' : `-${version}`;
     const newMediaId = randomUUID();
     const mediaDir = join(MEDIA_DIR, teamId);
     mkdirSync(mediaDir, { recursive: true });
@@ -243,7 +380,7 @@ async function runGeneration(
       id: newMediaId,
       teamId,
       filename: storedFilename,
-      originalName: `${baseName}-generated${storedExt}`,
+      originalName: `${baseName}-generated${versionSuffix}${storedExt}`,
       mimeType: finalMime,
       size: fileBuffer.length,
       width: null,

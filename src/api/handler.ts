@@ -8,7 +8,7 @@ import { initializeDatabase, encryptCredentials, decryptCredentials } from '../d
 import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import { getPostizIntegrations } from '../drivers/postiz-backend';
-import { startGenerationJob, getJob } from '../generation/runner';
+import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import type {
   ApiError,
@@ -555,6 +555,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       if (body.status !== undefined) updates.status = body.status;
       if (body.scheduledAt !== undefined) updates.scheduledAt = body.scheduledAt || null;
       if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
+      if ((body as any).mediaIds !== undefined) updates.mediaIds = JSON.stringify((body as any).mediaIds);
       await db.update(schema.posts).set(updates).where(eq(schema.posts.id, singlePostMatch[1]));
       return { status: 200, data: { updated: true, id: singlePostMatch[1] } };
     } catch (error: any) {
@@ -790,6 +791,109 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // PATCH /media/:id — update alt and tags
+  if (mediaIdMatch && req.method === 'PATCH') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [item] = await db
+        .select()
+        .from(schema.media)
+        .where(and(eq(schema.media.id, mediaIdMatch[1]), eq(schema.media.teamId, teamId)));
+      if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
+
+      const body = (req.body || {}) as { alt?: string | null; tags?: string[] };
+      const updates: Record<string, unknown> = {};
+      if (body.alt !== undefined) updates.alt = body.alt || null;
+      if (body.tags !== undefined) updates.tags = JSON.stringify(Array.isArray(body.tags) ? body.tags : []);
+      if (!Object.keys(updates).length) {
+        return { status: 200, data: { id: mediaIdMatch[1], updated: false } };
+      }
+      await db.update(schema.media).set(updates).where(eq(schema.media.id, mediaIdMatch[1]));
+      return { status: 200, data: { id: mediaIdMatch[1], updated: true } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to update media');
+    }
+  }
+
+  // POST /media/bulk — bulk operations: delete, edit tags, edit alt
+  if (req.path === '/media/bulk' && req.method === 'POST') {
+    try {
+      const body = req.body as {
+        action?: 'delete' | 'edit';
+        ids?: string[];
+        addTags?: string[];
+        removeTags?: string[];
+        tags?: string[];
+        alt?: string;
+      };
+      if (!Array.isArray(body?.ids) || !body.ids.length) {
+        return apiError(400, 'VALIDATION_ERROR', 'ids array is required');
+      }
+
+      const { db } = initializeDatabase(teamId);
+      const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+
+      if (body.action === 'delete') {
+        for (const id of body.ids) {
+          try {
+            const [item] = await db
+              .select()
+              .from(schema.media)
+              .where(and(eq(schema.media.id, id), eq(schema.media.teamId, teamId)));
+            if (!item) { results.push({ id, ok: false, error: 'not found' }); continue; }
+            const fp = join(MEDIA_DIR, teamId, item.filename);
+            try { unlinkSync(fp); } catch { /* ok if already gone */ }
+            await db.delete(schema.media).where(eq(schema.media.id, id));
+            results.push({ id, ok: true });
+          } catch (error: any) {
+            results.push({ id, ok: false, error: error?.message || 'delete failed' });
+          }
+        }
+        return { status: 200, data: { action: 'delete', results } };
+      }
+
+      if (body.action === 'edit') {
+        const addTags = Array.isArray(body.addTags) ? body.addTags : [];
+        const removeTags = Array.isArray(body.removeTags) ? body.removeTags : [];
+        const replaceTags = Array.isArray(body.tags) ? body.tags : null;
+        const setAlt = Object.prototype.hasOwnProperty.call(body, 'alt') ? body.alt : undefined;
+
+        for (const id of body.ids) {
+          try {
+            const [item] = await db
+              .select()
+              .from(schema.media)
+              .where(and(eq(schema.media.id, id), eq(schema.media.teamId, teamId)));
+            if (!item) { results.push({ id, ok: false, error: 'not found' }); continue; }
+
+            const updates: Record<string, unknown> = {};
+            if (setAlt !== undefined) updates.alt = setAlt || null;
+            if (replaceTags) {
+              updates.tags = JSON.stringify(replaceTags);
+            } else if (addTags.length || removeTags.length) {
+              const currentTags = JSON.parse(item.tags || '[]');
+              const removeSet = new Set(removeTags);
+              const merged = [...new Set([...currentTags.filter((t: string) => !removeSet.has(t)), ...addTags])];
+              updates.tags = JSON.stringify(merged);
+            }
+
+            if (Object.keys(updates).length) {
+              await db.update(schema.media).set(updates).where(eq(schema.media.id, id));
+            }
+            results.push({ id, ok: true });
+          } catch (error: any) {
+            results.push({ id, ok: false, error: error?.message || 'edit failed' });
+          }
+        }
+        return { status: 200, data: { action: 'edit', results } };
+      }
+
+      return apiError(400, 'VALIDATION_ERROR', 'Unknown bulk action');
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Bulk operation failed');
+    }
+  }
+
   // DELETE /media/:id
   if (mediaIdMatch && req.method === 'DELETE') {
     try {
@@ -869,7 +973,28 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
-  // ---- POST /media/:id/generate (start async generation job) ----
+  // ---- POST /media/generate (prompt-only text-to-image, no source required) ----
+  if (req.path === '/media/generate' && req.method === 'POST') {
+    try {
+      const body = req.body as (GenerationRequest & { filename?: string }) | undefined;
+      if (!body?.prompt) {
+        return apiError(400, 'VALIDATION_ERROR', 'prompt is required');
+      }
+      const userId = getUserId(req);
+      const job = startPromptGenerationJob(teamId, {
+        prompt: body.prompt,
+        type: 'image',
+        provider: body.provider,
+        config: body.config,
+        filename: body.filename,
+      }, userId);
+      return { status: 202, data: { job } };
+    } catch (error: any) {
+      return apiError(400, 'GENERATION_ERROR', error?.message || 'Failed to start generation');
+    }
+  }
+
+  // ---- POST /media/:id/generate (start async generation job from source) ----
   const generateMatch = req.path.match(/^\/media\/([a-f0-9-]+)\/generate$/);
   if (generateMatch && req.method === 'POST') {
     try {
