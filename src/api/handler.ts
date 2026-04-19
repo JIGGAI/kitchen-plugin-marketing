@@ -7,7 +7,7 @@ import type { KitchenPluginContext } from './types-kitchen';
 import { initializeDatabase, encryptCredentials, decryptCredentials } from '../db';
 import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
-import { getPostizIntegrations } from '../drivers/postiz-backend';
+import { getPostizIntegrations, postizDeletePost, postizListPosts } from '../drivers/postiz-backend';
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
@@ -395,6 +395,80 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // ---- POST /posts/reconcile (Postiz → local sync) ----
+  // Compares local post_platform_publishes audit with Postiz's current state.
+  // Any local external_id Postiz no longer has is removed from the audit, and
+  // if all audit rows for a post are gone, the post's status is reset to draft.
+  if (req.path === '/posts/reconcile' && req.method === 'POST') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const sources = await getBackendSources(req, teamId);
+      if (!sources.postiz) {
+        return apiError(400, 'NOT_CONFIGURED', 'Postiz not configured for this team');
+      }
+      const body = (req.body || {}) as { startDate?: string; endDate?: string };
+      const now = Date.now();
+      const startDate = body.startDate || new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const endDate = body.endDate || new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
+
+      const remote = await postizListPosts(sources.postiz, { startDate, endDate });
+      const remoteIds = new Set(remote.map((p) => p.id));
+
+      const localRows = db
+        .select()
+        .from(schema.postPlatformPublishes)
+        .where(eq(schema.postPlatformPublishes.teamId, teamId))
+        .all();
+
+      const removedAuditRows: Array<{ postId: string; platform: string; externalId: string }> = [];
+      const affectedPostIds = new Set<string>();
+
+      for (const row of localRows) {
+        if (!row.externalId) continue;
+        if (remoteIds.has(row.externalId)) continue;
+        // Postiz no longer has this external_id — drop the audit row
+        db.delete(schema.postPlatformPublishes).where(eq(schema.postPlatformPublishes.id, row.id)).run();
+        removedAuditRows.push({ postId: row.postId, platform: row.platform, externalId: row.externalId });
+        affectedPostIds.add(row.postId);
+      }
+
+      // If a post has no remaining audit rows, roll its status back to draft
+      const revertedPosts: string[] = [];
+      for (const postId of affectedPostIds) {
+        const remaining = db
+          .select()
+          .from(schema.postPlatformPublishes)
+          .where(and(
+            eq(schema.postPlatformPublishes.postId, postId),
+            eq(schema.postPlatformPublishes.teamId, teamId),
+          ))
+          .all();
+        if (remaining.length === 0) {
+          db.update(schema.posts)
+            .set({ status: 'draft', updatedAt: new Date().toISOString() })
+            .where(and(eq(schema.posts.id, postId), eq(schema.posts.teamId, teamId)))
+            .run();
+          revertedPosts.push(postId);
+        }
+      }
+
+      return {
+        status: 200,
+        data: {
+          ok: true,
+          startDate,
+          endDate,
+          remoteCount: remote.length,
+          localAuditCount: localRows.length,
+          removedAuditRows,
+          revertedPosts,
+        },
+      };
+    } catch (error: any) {
+      return apiError(500, 'RECONCILE_ERROR', error?.message || 'Reconcile failed');
+    }
+  }
+
   if (req.path === '/posts' && req.method === 'POST') {
     try {
       const userId = getUserId(req);
@@ -582,8 +656,47 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .from(schema.posts)
         .where(and(eq(schema.posts.id, singlePostMatch[1]), eq(schema.posts.teamId, teamId)));
       if (!post) return apiError(404, 'NOT_FOUND', 'Post not found');
+
+      // Cascade delete to Postiz for any recorded external publishes.
+      // Postiz delete cascades by group, so a single call per external_id
+      // is sufficient even when the same local post maps to multiple
+      // platforms under one scheduling group.
+      const postizCascade: Array<{ platform: string; external_id: string; success: boolean; error?: string }> = [];
+      try {
+        const sources = await getBackendSources(req, teamId);
+        if (sources.postiz) {
+          const publishes = db
+            .select()
+            .from(schema.postPlatformPublishes)
+            .where(and(
+              eq(schema.postPlatformPublishes.postId, singlePostMatch[1]),
+              eq(schema.postPlatformPublishes.teamId, teamId),
+            ))
+            .all();
+          const seen = new Set<string>();
+          for (const pub of publishes) {
+            if (!pub.externalId || seen.has(pub.externalId)) continue;
+            seen.add(pub.externalId);
+            const result = await postizDeletePost(sources.postiz, pub.externalId);
+            postizCascade.push({
+              platform: pub.platform,
+              external_id: pub.externalId,
+              success: result.success,
+              error: result.error,
+            });
+          }
+        }
+      } catch (cascadeErr: any) {
+        // Log but don't block local deletion — caller asked us to delete
+        postizCascade.push({ platform: '', external_id: '', success: false, error: cascadeErr?.message || String(cascadeErr) });
+      }
+
+      await db.delete(schema.postPlatformPublishes).where(and(
+        eq(schema.postPlatformPublishes.postId, singlePostMatch[1]),
+        eq(schema.postPlatformPublishes.teamId, teamId),
+      ));
       await db.delete(schema.posts).where(eq(schema.posts.id, singlePostMatch[1]));
-      return { status: 200, data: { deleted: true, id: singlePostMatch[1] } };
+      return { status: 200, data: { deleted: true, id: singlePostMatch[1], postizCascade } };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Unknown error');
     }
@@ -600,6 +713,14 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       if (!post) return apiError(404, 'NOT_FOUND', 'Post not found');
       const body = (req.body || {}) as Partial<PostCreateRequest>;
       const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+
+      // Detect which publish-relevant fields are actually changing — these are
+      // the ones that require a Postiz cascade (delete + re-publish).
+      const publishRelevantChange =
+        (body.content !== undefined && body.content !== post.content) ||
+        ((body as any).mediaIds !== undefined && JSON.stringify((body as any).mediaIds) !== (post.mediaIds || '[]')) ||
+        (body.scheduledAt !== undefined && (body.scheduledAt || null) !== (post.scheduledAt || null));
+
       if (body.content !== undefined) updates.content = body.content;
       if (body.platforms !== undefined) updates.platforms = JSON.stringify(body.platforms);
       if (body.status !== undefined) updates.status = body.status;
@@ -607,7 +728,120 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
       if ((body as any).mediaIds !== undefined) updates.mediaIds = JSON.stringify((body as any).mediaIds);
       await db.update(schema.posts).set(updates).where(eq(schema.posts.id, singlePostMatch[1]));
-      return { status: 200, data: { updated: true, id: singlePostMatch[1] } };
+
+      // Cascade to Postiz when publish-relevant fields changed and the post
+      // already has external publishes. Delete the old scheduled posts on
+      // Postiz, then re-publish with the updated content/media/schedule.
+      const postizCascade: Array<{ platform: string; integrationId: string; action: string; success: boolean; error?: string; postId?: string }> = [];
+      if (publishRelevantChange) {
+        try {
+          const existingPublishes = db
+            .select()
+            .from(schema.postPlatformPublishes)
+            .where(and(
+              eq(schema.postPlatformPublishes.postId, singlePostMatch[1]),
+              eq(schema.postPlatformPublishes.teamId, teamId),
+            ))
+            .all();
+
+          if (existingPublishes.length > 0) {
+            const sources = await getBackendSources(req, teamId);
+            if (!sources.postiz) {
+              postizCascade.push({ platform: '', integrationId: '', action: 'skip', success: false, error: 'Postiz not configured' });
+            } else {
+              // Step 1: delete existing Postiz posts
+              const seen = new Set<string>();
+              for (const pub of existingPublishes) {
+                if (!pub.externalId || seen.has(pub.externalId)) continue;
+                seen.add(pub.externalId);
+                const d = await postizDeletePost(sources.postiz, pub.externalId);
+                postizCascade.push({
+                  platform: pub.platform,
+                  integrationId: pub.integrationId || '',
+                  action: 'delete',
+                  success: d.success,
+                  error: d.error,
+                });
+              }
+              // Step 2: clear local publish audit rows
+              await db.delete(schema.postPlatformPublishes).where(and(
+                eq(schema.postPlatformPublishes.postId, singlePostMatch[1]),
+                eq(schema.postPlatformPublishes.teamId, teamId),
+              ));
+
+              // Step 3: resolve media URLs from current mediaIds
+              const currentMediaIds: string[] = JSON.parse(updates.mediaIds as string || post.mediaIds || '[]');
+              const resolvedMediaUrls: string[] = [];
+              for (const mid of currentMediaIds) {
+                const [m] = db
+                  .select()
+                  .from(schema.media)
+                  .where(and(eq(schema.media.id, mid), eq(schema.media.teamId, teamId)))
+                  .all();
+                if (m?.url) resolvedMediaUrls.push(m.url);
+              }
+
+              // Step 4: re-publish for each (platform, integrationId) pair that
+              // was previously published. Each creates a fresh Postiz post with
+              // the updated content/media/schedule.
+              const content = body.content !== undefined ? body.content : post.content;
+              const scheduledAt = body.scheduledAt !== undefined ? (body.scheduledAt || undefined) : (post.scheduledAt || undefined);
+              const pairsSeen = new Set<string>();
+              for (const pub of existingPublishes) {
+                const pairKey = `${pub.platform}::${pub.integrationId || ''}`;
+                if (pairsSeen.has(pairKey)) continue;
+                pairsSeen.add(pairKey);
+
+                const driverConfig: import('../drivers').DriverConfig = {
+                  postiz: {
+                    apiKey: sources.postiz.apiKey,
+                    baseUrl: sources.postiz.baseUrl,
+                    integrationId: pub.integrationId || undefined,
+                  },
+                  kitchenBaseUrl: sources.kitchenBaseUrl,
+                };
+                const driver = createDriver(pub.platform, driverConfig);
+                if (!driver) {
+                  postizCascade.push({ platform: pub.platform, integrationId: pub.integrationId || '', action: 'publish', success: false, error: 'No driver' });
+                  continue;
+                }
+                const postContent: PostContent = {
+                  text: String(content || ''),
+                  mediaUrls: resolvedMediaUrls,
+                  scheduledAt,
+                };
+                const result = await driver.publish(postContent);
+                postizCascade.push({
+                  platform: pub.platform,
+                  integrationId: pub.integrationId || '',
+                  action: 'publish',
+                  success: result.success,
+                  error: result.error,
+                  postId: result.postId,
+                });
+                if (result.success && result.postId) {
+                  const nowIso = new Date().toISOString();
+                  db.insert(schema.postPlatformPublishes).values({
+                    id: randomUUID(),
+                    teamId,
+                    postId: singlePostMatch[1],
+                    platform: pub.platform,
+                    externalId: result.postId,
+                    integrationId: pub.integrationId || null,
+                    publishedAt: nowIso,
+                    syncedAt: null,
+                    createdAt: nowIso,
+                  }).run();
+                }
+              }
+            }
+          }
+        } catch (cascadeErr: any) {
+          postizCascade.push({ platform: '', integrationId: '', action: 'error', success: false, error: cascadeErr?.message || String(cascadeErr) });
+        }
+      }
+
+      return { status: 200, data: { updated: true, id: singlePostMatch[1], postizCascade } };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Unknown error');
     }
