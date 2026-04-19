@@ -10,6 +10,7 @@ import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type
 import { getPostizIntegrations } from '../drivers/postiz-backend';
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
+import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
 import type {
   ApiError,
   PaginatedResponse,
@@ -225,6 +226,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       scheduledAt?: string;
       integrationId?: string; // optional: target a specific Postiz integration
       settings?: Record<string, Record<string, unknown>>; // per-platform settings
+      postId?: string;
     };
 
     if (!body?.content || !body?.platforms?.length) {
@@ -276,6 +278,24 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         backend: status.backend,
         integrationId: status.integrationId,
       });
+      // Record publish history if we have an internal post ID and Postiz returned a post ID
+      if (body.postId && result.success && result.postId) {
+        try {
+          const { db: pubDb } = initializeDatabase(teamId);
+          const now = new Date().toISOString();
+          pubDb.insert(schema.postPlatformPublishes).values({
+            id: randomUUID(),
+            teamId,
+            postId: body.postId,
+            platform,
+            externalId: result.postId,
+            integrationId: status.integrationId || null,
+            publishedAt: body.scheduledAt || now,
+            syncedAt: null,
+            createdAt: now,
+          }).run();
+        } catch { /* non-fatal */ }
+      }
     }
 
     const allOk = results.every((r) => r.success);
@@ -509,6 +529,18 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .from(schema.posts)
         .where(and(eq(schema.posts.id, singlePostMatch[1]), eq(schema.posts.teamId, teamId)));
       if (!post) return apiError(404, 'NOT_FOUND', 'Post not found');
+      const metricsRows = await db
+        .select()
+        .from(schema.postMetrics)
+        .where(eq(schema.postMetrics.postId, singlePostMatch[1]));
+      const publishRows = await db
+        .select()
+        .from(schema.postPlatformPublishes)
+        .where(and(
+          eq(schema.postPlatformPublishes.postId, singlePostMatch[1]),
+          eq(schema.postPlatformPublishes.teamId, teamId),
+        ));
+
       return {
         status: 200,
         data: {
@@ -516,6 +548,24 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
           platforms: JSON.parse(post.platforms || '[]'),
           tags: JSON.parse(post.tags || '[]'),
           mediaIds: JSON.parse(post.mediaIds || '[]'),
+          metrics: metricsRows.map((m) => ({
+            platform: m.platform,
+            impressions: m.impressions || 0,
+            likes: m.likes || 0,
+            comments: m.comments || 0,
+            shares: m.shares || 0,
+            clicks: m.clicks || 0,
+            engagementRate: m.engagementRate,
+            platformDetails: m.platformDetails ? JSON.parse(m.platformDetails) : {},
+            syncedAt: m.syncedAt,
+          })),
+          publishes: publishRows.map((p) => ({
+            platform: p.platform,
+            externalId: p.externalId,
+            integrationId: p.integrationId,
+            publishedAt: p.publishedAt,
+            syncedAt: p.syncedAt,
+          })),
         },
       };
     } catch (error: any) {
@@ -1020,6 +1070,31 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     const job = getJob(teamId, jobMatch[1]);
     if (!job) return apiError(404, 'NOT_FOUND', 'Job not found');
     return { status: 200, data: { job } };
+  }
+
+  // ---- POST /posts/:id/sync-metrics — manual refresh for a single post ----
+  const syncMetricsMatch = req.path.match(/^\/posts\/([a-f0-9-]+)\/sync-metrics$/);
+  if (syncMetricsMatch && req.method === 'POST') {
+    const sources = await getBackendSources(req, teamId);
+    if (!sources.postiz) {
+      return apiError(400, 'NO_POSTIZ_CONFIG', 'Postiz is not configured for this team');
+    }
+    const result = await syncPostMetrics(teamId, syncMetricsMatch[1], sources.postiz);
+    return { status: 200, data: result };
+  }
+
+  // ---- POST /analytics/sync-batch — batch sync (hourly workflow) ----
+  if (req.path === '/analytics/sync-batch' && req.method === 'POST') {
+    const body = req.body as { postIds?: string[] };
+    if (!Array.isArray(body?.postIds) || !body.postIds.length) {
+      return apiError(400, 'VALIDATION_ERROR', 'postIds array is required');
+    }
+    const sources = await getBackendSources(req, teamId);
+    if (!sources.postiz) {
+      return apiError(400, 'NO_POSTIZ_CONFIG', 'Postiz is not configured for this team');
+    }
+    const results = await syncPostsBatch(teamId, body.postIds, sources.postiz);
+    return { status: 200, data: { results } };
   }
 
   return apiError(501, 'NOT_IMPLEMENTED', `No handler for ${req.method} ${req.path}`);
