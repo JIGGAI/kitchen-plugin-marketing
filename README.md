@@ -2,6 +2,10 @@
 
 A comprehensive marketing suite plugin for ClawKitchen that provides content management, scheduling, analytics, and social media integration.
 
+> **⚠ Postiz is required.** Social publishing is currently wired only through Postiz (https://postiz.com). The driver layer has placeholders for gateway and direct-API backends but Postiz is the only production-grade path today. Treat Postiz as a hard requirement.
+
+> **📖 Setting up marketing → social handoff?** See [`docs/SOCIAL_EXECUTION_SETUP.md`](./docs/SOCIAL_EXECUTION_SETUP.md) for the full two-team setup guide: plugin installation on both teams, Postiz configuration, workflow naming conventions the editor picker relies on, and a demo walkthrough from content generation to per-platform publishing.
+
 ## Installation
 
 ### Via Kitchen CLI
