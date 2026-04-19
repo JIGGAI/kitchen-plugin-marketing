@@ -64,7 +64,7 @@ export function initializeDatabase(teamId: string) {
     migrate(db, { migrationsFolder: migrationsDir });
   } catch (error: any) {
     // Fallback: run SQL directly if drizzle migrator fails (missing journal etc.)
-    const migrationFiles = ['0001_initial.sql', '0002_generation_jobs.sql'];
+    const migrationFiles = ['0001_initial.sql', '0002_generation_jobs.sql', '0003_post_platform_publishes.sql', '0004_media_prompt.sql'];
     for (const migrationFile of migrationFiles) {
       try {
         const sqlPath = join(PLUGIN_ROOT, 'db', 'migrations', migrationFile);
