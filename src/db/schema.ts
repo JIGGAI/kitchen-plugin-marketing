@@ -77,6 +77,7 @@ export const postMetrics = sqliteTable('post_metrics', {
   comments: integer('comments').default(0),
   clicks: integer('clicks').default(0),
   engagementRate: text('engagement_rate'), // Stored as string to avoid float precision issues
+  platformDetails: text('platform_details'),
   syncedAt: text('synced_at').notNull(),
 });
 
@@ -102,6 +103,22 @@ export const pluginConfig = sqliteTable('plugin_config', {
 }, (table) => ({
   pk: primaryKey({ columns: [table.teamId, table.key] }),
 }));
+
+// Post platform publishes table (tracks per-platform external IDs for analytics sync)
+export const postPlatformPublishes = sqliteTable('post_platform_publishes', {
+  id: text('id').primaryKey(),
+  teamId: text('team_id').notNull(),
+  postId: text('post_id').notNull(),
+  platform: text('platform').notNull(),
+  externalId: text('external_id').notNull(),
+  integrationId: text('integration_id'),
+  publishedAt: text('published_at').notNull(),
+  syncedAt: text('synced_at'),
+  createdAt: text('created_at').notNull(),
+});
+
+export type PostPlatformPublish = typeof postPlatformPublishes.$inferSelect;
+export type NewPostPlatformPublish = typeof postPlatformPublishes.$inferInsert;
 
 // Webhooks table
 export const webhooks = sqliteTable('webhooks', {

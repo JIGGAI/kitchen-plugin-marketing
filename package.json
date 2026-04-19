@@ -62,7 +62,7 @@
     "db:migrate": "drizzle-kit push:sqlite",
     "db:studio": "drizzle-kit studio",
     "prepublishOnly": "npm run build",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
@@ -73,6 +73,7 @@
     "@types/node": "^20.0.0",
     "drizzle-kit": "^0.20.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^2.1.9"
   }
 }
