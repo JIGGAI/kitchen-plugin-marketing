@@ -965,6 +965,27 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // ---- /integrations (list connected Postiz accounts) ----
+  if (req.path === '/integrations' && req.method === 'GET') {
+    try {
+      const sources = await getBackendSources(req, teamId);
+      if (!sources.postiz) {
+        return { status: 200, data: { integrations: [] } };
+      }
+      const raw = sources._postizIntegrations || await getPostizIntegrations(sources.postiz);
+      const integrations = (raw || []).map((i: any) => ({
+        id: i.id,
+        name: i.name,
+        identifier: i.identifier,
+        picture: i.picture || null,
+        disabled: Boolean(i.disabled),
+      }));
+      return { status: 200, data: { integrations } };
+    } catch (error: any) {
+      return apiError(500, 'POSTIZ_ERROR', error?.message || 'Failed to fetch integrations');
+    }
+  }
+
   // ---- /config (per-team plugin config — e.g. Postiz API key) ----
   if (req.path === '/config' && req.method === 'GET') {
     try {
