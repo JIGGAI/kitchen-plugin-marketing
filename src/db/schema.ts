@@ -32,6 +32,7 @@ export const media = sqliteTable('media', {
   tags: text('tags'), // JSON array
   url: text('url').notNull(),
   thumbnailUrl: text('thumbnail_url'),
+  prompt: text('prompt'), // Original generation prompt for AI-generated media
   createdAt: text('created_at').notNull(),
   createdBy: text('created_by').notNull(),
 });

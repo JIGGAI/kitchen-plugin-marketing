@@ -389,6 +389,7 @@ async function runGeneration(
       tags,
       url: `/api/plugins/marketing/media/${newMediaId}/file?team=${encodeURIComponent(teamId)}`,
       thumbnailUrl,
+      prompt: request.prompt,
       createdAt: now,
       createdBy: userId,
     }).run();
