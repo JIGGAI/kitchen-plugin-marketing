@@ -412,7 +412,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const endDate = body.endDate || new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
 
       const remote = await postizListPosts(sources.postiz, { startDate, endDate });
-      const remoteIds = new Set(remote.map((p) => p.id));
+      const remoteById = new Map(remote.map((p) => [p.id, p]));
 
       const localRows = db
         .select()
@@ -422,14 +422,20 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
 
       const removedAuditRows: Array<{ postId: string; platform: string; externalId: string }> = [];
       const affectedPostIds = new Set<string>();
+      const maybePublishedPostIds = new Set<string>();
 
       for (const row of localRows) {
         if (!row.externalId) continue;
-        if (remoteIds.has(row.externalId)) continue;
-        // Postiz no longer has this external_id — drop the audit row
-        db.delete(schema.postPlatformPublishes).where(eq(schema.postPlatformPublishes.id, row.id)).run();
-        removedAuditRows.push({ postId: row.postId, platform: row.platform, externalId: row.externalId });
-        affectedPostIds.add(row.postId);
+        const remotePost = remoteById.get(row.externalId);
+        if (!remotePost) {
+          // Postiz no longer has this external_id — drop the audit row
+          db.delete(schema.postPlatformPublishes).where(eq(schema.postPlatformPublishes.id, row.id)).run();
+          removedAuditRows.push({ postId: row.postId, platform: row.platform, externalId: row.externalId });
+          affectedPostIds.add(row.postId);
+        } else if (remotePost.publishDate && new Date(remotePost.publishDate).getTime() < Date.now()) {
+          // Postiz has it with a publishDate in the past → the post has fired
+          maybePublishedPostIds.add(row.postId);
+        }
       }
 
       // If a post has no remaining audit rows, roll its status back to draft
@@ -452,6 +458,40 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         }
       }
 
+      // Transition scheduled → published for posts whose Postiz publishDate
+      // has passed. We only promote (never demote) — a draft post manually
+      // resumed won't have audit rows so won't be affected.
+      const publishedPosts: Array<{ postId: string; publishedAt: string }> = [];
+      for (const postId of maybePublishedPostIds) {
+        const [post] = db
+          .select()
+          .from(schema.posts)
+          .where(and(eq(schema.posts.id, postId), eq(schema.posts.teamId, teamId)))
+          .all();
+        if (!post || post.status === 'published' || post.status === 'failed') continue;
+        // Use the earliest Postiz publishDate across this post's audit rows
+        const relatedRows = db
+          .select()
+          .from(schema.postPlatformPublishes)
+          .where(and(
+            eq(schema.postPlatformPublishes.postId, postId),
+            eq(schema.postPlatformPublishes.teamId, teamId),
+          ))
+          .all();
+        let earliest = '';
+        for (const r of relatedRows) {
+          const rp = remoteById.get(r.externalId);
+          if (rp?.publishDate && (!earliest || rp.publishDate < earliest)) earliest = rp.publishDate;
+        }
+        const publishedAt = earliest || new Date().toISOString();
+        const nowIso = new Date().toISOString();
+        db.update(schema.posts)
+          .set({ status: 'published', publishedAt, updatedAt: nowIso })
+          .where(and(eq(schema.posts.id, postId), eq(schema.posts.teamId, teamId)))
+          .run();
+        publishedPosts.push({ postId, publishedAt });
+      }
+
       return {
         status: 200,
         data: {
@@ -462,6 +502,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
           localAuditCount: localRows.length,
           removedAuditRows,
           revertedPosts,
+          publishedPosts,
         },
       };
     } catch (error: any) {
@@ -716,10 +757,23 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
 
       // Detect which publish-relevant fields are actually changing — these are
       // the ones that require a Postiz cascade (delete + re-publish).
+      const extractAccountTags = (tags: unknown): string[] => {
+        const arr = typeof tags === 'string' ? JSON.parse(tags || '[]') : (Array.isArray(tags) ? tags : []);
+        return arr.filter((t: unknown) => typeof t === 'string' && t.startsWith('workflow:account:')).sort();
+      };
+      const oldAccountTags = extractAccountTags(post.tags);
+      const newAccountTags = body.tags !== undefined ? extractAccountTags(body.tags) : oldAccountTags;
+      const accountTagsChanged = JSON.stringify(oldAccountTags) !== JSON.stringify(newAccountTags);
+      const oldPlatforms = JSON.parse(post.platforms || '[]');
+      const newPlatforms = body.platforms !== undefined ? body.platforms : oldPlatforms;
+      const platformsChanged = JSON.stringify([...oldPlatforms].sort()) !== JSON.stringify([...newPlatforms].sort());
+
       const publishRelevantChange =
         (body.content !== undefined && body.content !== post.content) ||
         ((body as any).mediaIds !== undefined && JSON.stringify((body as any).mediaIds) !== (post.mediaIds || '[]')) ||
-        (body.scheduledAt !== undefined && (body.scheduledAt || null) !== (post.scheduledAt || null));
+        (body.scheduledAt !== undefined && (body.scheduledAt || null) !== (post.scheduledAt || null)) ||
+        accountTagsChanged ||
+        platformsChanged;
 
       if (body.content !== undefined) updates.content = body.content;
       if (body.platforms !== undefined) updates.platforms = JSON.stringify(body.platforms);
@@ -744,7 +798,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
             ))
             .all();
 
-          if (existingPublishes.length > 0) {
+          const cascadeWorthwhile = existingPublishes.length > 0 || accountTagsChanged || platformsChanged;
+          if (cascadeWorthwhile) {
             const sources = await getBackendSources(req, teamId);
             if (!sources.postiz) {
               postizCascade.push({ platform: '', integrationId: '', action: 'skip', success: false, error: 'Postiz not configured' });
@@ -781,28 +836,63 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                 if (m?.url) resolvedMediaUrls.push(m.url);
               }
 
-              // Step 4: re-publish for each (platform, integrationId) pair that
-              // was previously published. Each creates a fresh Postiz post with
-              // the updated content/media/schedule.
+              // Step 4: build the NEW (platform, integrationId) pair set to
+              // publish. Resolve for each updated platform using:
+              //   1. newAccountTags filtered to integrations matching that canonical platform
+              //   2. team defaultAccounts[platform] as fallback
+              // This replaces the old behavior of re-publishing to the SAME
+              // pairs as before, which dropped account changes on the floor.
+              const canonicalPlatform = (id: string) =>
+                String(id || '').toLowerCase().replace(/-standalone$/, '').replace(/-page$/, '');
+              const integrations = sources._postizIntegrations || await getPostizIntegrations(sources.postiz);
+              const integById = new Map(integrations.map((i: any) => [String(i.id), i]));
+
+              // Load team default accounts from plugin_config
+              const defaultAccounts: Record<string, string | string[]> = {};
+              try {
+                const cfgRows = db.select().from(schema.pluginConfig)
+                  .where(and(eq(schema.pluginConfig.teamId, teamId), eq(schema.pluginConfig.key, 'defaultAccounts')))
+                  .all();
+                if (cfgRows.length) {
+                  const parsed = JSON.parse(cfgRows[0].value);
+                  if (parsed && typeof parsed === 'object') Object.assign(defaultAccounts, parsed);
+                }
+              } catch { /* ignore */ }
+
+              const resolveForPlatform = (platform: string): string[] => {
+                const target = canonicalPlatform(platform);
+                const tagIds = newAccountTags
+                  .map((t) => t.slice('workflow:account:'.length))
+                  .filter((id) => canonicalPlatform(String((integById.get(id) as any)?.identifier || '')) === target);
+                if (tagIds.length) return tagIds;
+                const fallback = defaultAccounts[target];
+                if (Array.isArray(fallback)) return fallback.filter(Boolean);
+                if (typeof fallback === 'string' && fallback) return [fallback];
+                return [];
+              };
+
+              const newPairs: Array<{ platform: string; integrationId: string }> = [];
+              for (const platform of newPlatforms) {
+                for (const accountId of resolveForPlatform(platform)) {
+                  newPairs.push({ platform, integrationId: accountId });
+                }
+              }
+
               const content = body.content !== undefined ? body.content : post.content;
               const scheduledAt = body.scheduledAt !== undefined ? (body.scheduledAt || undefined) : (post.scheduledAt || undefined);
-              const pairsSeen = new Set<string>();
-              for (const pub of existingPublishes) {
-                const pairKey = `${pub.platform}::${pub.integrationId || ''}`;
-                if (pairsSeen.has(pairKey)) continue;
-                pairsSeen.add(pairKey);
 
+              for (const pair of newPairs) {
                 const driverConfig: import('../drivers').DriverConfig = {
                   postiz: {
                     apiKey: sources.postiz.apiKey,
                     baseUrl: sources.postiz.baseUrl,
-                    integrationId: pub.integrationId || undefined,
+                    integrationId: pair.integrationId || undefined,
                   },
                   kitchenBaseUrl: sources.kitchenBaseUrl,
                 };
-                const driver = createDriver(pub.platform, driverConfig);
+                const driver = createDriver(pair.platform, driverConfig);
                 if (!driver) {
-                  postizCascade.push({ platform: pub.platform, integrationId: pub.integrationId || '', action: 'publish', success: false, error: 'No driver' });
+                  postizCascade.push({ platform: pair.platform, integrationId: pair.integrationId, action: 'publish', success: false, error: 'No driver' });
                   continue;
                 }
                 const postContent: PostContent = {
@@ -812,8 +902,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                 };
                 const result = await driver.publish(postContent);
                 postizCascade.push({
-                  platform: pub.platform,
-                  integrationId: pub.integrationId || '',
+                  platform: pair.platform,
+                  integrationId: pair.integrationId,
                   action: 'publish',
                   success: result.success,
                   error: result.error,
@@ -825,9 +915,9 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                     id: randomUUID(),
                     teamId,
                     postId: singlePostMatch[1],
-                    platform: pub.platform,
+                    platform: pair.platform,
                     externalId: result.postId,
-                    integrationId: pub.integrationId || null,
+                    integrationId: pair.integrationId || null,
                     publishedAt: nowIso,
                     syncedAt: null,
                     createdAt: nowIso,
@@ -1213,6 +1303,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         identifier: i.identifier,
         picture: i.picture || null,
         disabled: Boolean(i.disabled),
+        username: i.username || null,
+        profile: i.profile || null,
       }));
       return { status: 200, data: { integrations } };
     } catch (error: any) {
