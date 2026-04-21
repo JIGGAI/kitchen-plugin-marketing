@@ -412,7 +412,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const endDate = body.endDate || new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
 
       const remote = await postizListPosts(sources.postiz, { startDate, endDate });
-      const remoteIds = new Set(remote.map((p) => p.id));
+      const remoteById = new Map(remote.map((p) => [p.id, p]));
 
       const localRows = db
         .select()
@@ -422,14 +422,20 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
 
       const removedAuditRows: Array<{ postId: string; platform: string; externalId: string }> = [];
       const affectedPostIds = new Set<string>();
+      const maybePublishedPostIds = new Set<string>();
 
       for (const row of localRows) {
         if (!row.externalId) continue;
-        if (remoteIds.has(row.externalId)) continue;
-        // Postiz no longer has this external_id — drop the audit row
-        db.delete(schema.postPlatformPublishes).where(eq(schema.postPlatformPublishes.id, row.id)).run();
-        removedAuditRows.push({ postId: row.postId, platform: row.platform, externalId: row.externalId });
-        affectedPostIds.add(row.postId);
+        const remotePost = remoteById.get(row.externalId);
+        if (!remotePost) {
+          // Postiz no longer has this external_id — drop the audit row
+          db.delete(schema.postPlatformPublishes).where(eq(schema.postPlatformPublishes.id, row.id)).run();
+          removedAuditRows.push({ postId: row.postId, platform: row.platform, externalId: row.externalId });
+          affectedPostIds.add(row.postId);
+        } else if (remotePost.publishDate && new Date(remotePost.publishDate).getTime() < Date.now()) {
+          // Postiz has it with a publishDate in the past → the post has fired
+          maybePublishedPostIds.add(row.postId);
+        }
       }
 
       // If a post has no remaining audit rows, roll its status back to draft
@@ -452,6 +458,40 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         }
       }
 
+      // Transition scheduled → published for posts whose Postiz publishDate
+      // has passed. We only promote (never demote) — a draft post manually
+      // resumed won't have audit rows so won't be affected.
+      const publishedPosts: Array<{ postId: string; publishedAt: string }> = [];
+      for (const postId of maybePublishedPostIds) {
+        const [post] = db
+          .select()
+          .from(schema.posts)
+          .where(and(eq(schema.posts.id, postId), eq(schema.posts.teamId, teamId)))
+          .all();
+        if (!post || post.status === 'published' || post.status === 'failed') continue;
+        // Use the earliest Postiz publishDate across this post's audit rows
+        const relatedRows = db
+          .select()
+          .from(schema.postPlatformPublishes)
+          .where(and(
+            eq(schema.postPlatformPublishes.postId, postId),
+            eq(schema.postPlatformPublishes.teamId, teamId),
+          ))
+          .all();
+        let earliest = '';
+        for (const r of relatedRows) {
+          const rp = remoteById.get(r.externalId);
+          if (rp?.publishDate && (!earliest || rp.publishDate < earliest)) earliest = rp.publishDate;
+        }
+        const publishedAt = earliest || new Date().toISOString();
+        const nowIso = new Date().toISOString();
+        db.update(schema.posts)
+          .set({ status: 'published', publishedAt, updatedAt: nowIso })
+          .where(and(eq(schema.posts.id, postId), eq(schema.posts.teamId, teamId)))
+          .run();
+        publishedPosts.push({ postId, publishedAt });
+      }
+
       return {
         status: 200,
         data: {
@@ -462,6 +502,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
           localAuditCount: localRows.length,
           removedAuditRows,
           revertedPosts,
+          publishedPosts,
         },
       };
     } catch (error: any) {
