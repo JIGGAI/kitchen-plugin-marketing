@@ -11,6 +11,7 @@ import type { GenerationRequest, GenerationJobResponse } from './types';
 
 const MEDIA_DIR = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing', 'media');
 const DEFAULT_COMPRESSION_QUALITY = 70; // 70% quality = ~30% size reduction
+const DEFAULT_VIDEO_DURATION_SECONDS = 10;
 
 const MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -32,6 +33,24 @@ function getCompressionQuality(teamId: string): number {
     }
   } catch { /* use default */ }
   return DEFAULT_COMPRESSION_QUALITY;
+}
+
+// Per-team video duration default (seconds). Kling accepts 5 or 10 today;
+// clamped to a sane range so a bad config value can't crash the driver.
+function getVideoDuration(teamId: string): number {
+  try {
+    const { db } = initializeDatabase(teamId);
+    const rows = db
+      .select()
+      .from(schema.pluginConfig)
+      .where(and(eq(schema.pluginConfig.teamId, teamId), eq(schema.pluginConfig.key, 'videoDuration')))
+      .all();
+    if (rows.length) {
+      const val = parseInt(rows[0].value, 10);
+      if (val >= 1 && val <= 60) return val;
+    }
+  } catch { /* use default */ }
+  return DEFAULT_VIDEO_DURATION_SECONDS;
 }
 
 function runFfmpeg(args: string[]): Promise<{ stdout: string; stderr: string }> {
@@ -297,9 +316,14 @@ async function runGeneration(
   mkdirSync(outputDir, { recursive: true });
 
   try {
+    // Merge per-team video defaults when the request didn't specify duration.
+    const videoConfig = request.type === 'video'
+      ? { ...request.config, duration: request.config?.duration ?? getVideoDuration(teamId) }
+      : request.config;
+
     const result = request.type === 'image'
       ? await generateImage(sourcePath, request.prompt, outputDir, request.config)
-      : await generateVideo(sourcePath, request.prompt, outputDir, request.config);
+      : await generateVideo(sourcePath, request.prompt, outputDir, videoConfig);
 
     if (!existsSync(result.filePath)) {
       throw new Error(`Generated file not found at ${result.filePath}`);
