@@ -14,12 +14,8 @@
   "files": [
     "dist/",
     "db/migrations/",
-    "scripts/kitchen-cli.js",
     "README.md"
   ],
-  "bin": {
-    "kitchen-plugin-marketing": "scripts/kitchen-cli.js"
-  },
   "kitchenPlugin": {
     "id": "marketing",
     "name": "Marketing Suite",
@@ -57,7 +53,6 @@
   },
   "scripts": {
     "build": "node scripts/build.js",
-    "dev": "node scripts/dev.js",
     "db:generate": "drizzle-kit generate:sqlite",
     "db:migrate": "drizzle-kit push:sqlite",
     "db:studio": "drizzle-kit studio",
