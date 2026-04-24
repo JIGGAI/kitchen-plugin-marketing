@@ -881,6 +881,23 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
               const content = body.content !== undefined ? body.content : post.content;
               const scheduledAt = body.scheduledAt !== undefined ? (body.scheduledAt || undefined) : (post.scheduledAt || undefined);
 
+              // If the post has been moved to draft status, we've already deleted
+              // the old external posts — don't re-publish anything. Drafts should
+              // not live on Postiz. Without this guard, Postiz receives a
+              // publish call with scheduledAt=undefined and treats it as
+              // "publish now" → goes live with current time.
+              const effectiveStatus = body.status !== undefined ? body.status : post.status;
+              if (effectiveStatus === 'draft') {
+                postizCascade.push({
+                  platform: '',
+                  integrationId: '',
+                  action: 'skip-republish',
+                  success: true,
+                  error: 'Post is draft; external publishes deleted, not re-published',
+                });
+                newPairs.length = 0;
+              }
+
               for (const pair of newPairs) {
                 const driverConfig: import('../drivers').DriverConfig = {
                   postiz: {
