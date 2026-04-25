@@ -354,11 +354,13 @@
     const goPrev = () => setAnchor(view === 'week' ? addDays(anchor, -7) : new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
     const goNext = () => setAnchor(view === 'week' ? addDays(anchor, 7) : new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1));
 
-    // Get posts for a given day
+    // Get posts for a given day. Calendar shows ONLY posts that are
+    // scheduled AND have a scheduledAt — drafts, published, and failed
+    // posts don't appear on the calendar regardless of any date.
     const postsForDay = useCallback((day: Date) => {
       return posts.filter((p) => {
-        const d = p.scheduledAt ? new Date(p.scheduledAt) : new Date(p.createdAt);
-        return isSameDay(d, day);
+        if (p.status !== 'scheduled' || !p.scheduledAt) return false;
+        return isSameDay(new Date(p.scheduledAt), day);
       });
     }, [posts]);
 
