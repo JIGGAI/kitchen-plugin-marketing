@@ -352,6 +352,13 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const conditions = [eq(schema.posts.teamId, teamId)];
       if (req.query.status) conditions.push(eq(schema.posts.status, String(req.query.status)));
       if (req.query.platform) conditions.push(like(schema.posts.platforms, `%"${req.query.platform}"%`));
+      if (req.query.tag) {
+        const tag = String(req.query.tag);
+        if (tag.includes('"')) {
+          return apiError(400, 'VALIDATION_ERROR', 'tag must not contain double quotes');
+        }
+        conditions.push(like(schema.posts.tags, `%"${tag}"%`));
+      }
 
       const totalResult = await db
         .select({ count: sql<number>`count(*)` })
