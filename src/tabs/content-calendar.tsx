@@ -125,32 +125,57 @@
       background: 'none', border: 'none', color: 'white', cursor: 'pointer',
       fontSize: '0.75rem', padding: '1px 3px', borderRadius: '3px',
     },
-    // Modal
+    // Modal — mirrors .modal / .modal-backdrop / .modal-card styling from
+    // ~/Sites/hmx-dashboard/public/assets/app.css so kitchen + dashboard
+    // share visual language.
     overlay: {
-      position: 'fixed' as const, inset: '0', background: 'rgba(0,0,0,0.65)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      zIndex: 9999, backdropFilter: 'blur(4px)',
+      position: 'fixed' as const,
+      inset: '0',
+      background: 'rgba(0,0,0,0.7)',
+      display: 'flex' as const,
+      alignItems: 'flex-start' as const,
+      justifyContent: 'center' as const,
+      padding: '16px',
+      zIndex: 80,
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
     },
     modal: {
-      background: 'var(--ck-bg-base, #0b0c10)', border: '1px solid var(--ck-border-subtle)',
-      borderRadius: '14px', width: '96vw', maxWidth: '1200px', maxHeight: '92vh',
-      overflow: 'auto' as const, display: 'flex', flexDirection: 'column' as const,
+      // Use the same bluish card color the plugin tab pages use — kitchen
+      // defines --ck-bg-soft (#121b29) for cards. Fallback hex matches.
+      background: 'var(--ck-bg-soft, #121b29)',
+      border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '16px',
+      width: 'min(1600px, calc(100vw - 32px))',
+      maxHeight: 'calc(100vh - 32px)',
+      overflow: 'auto' as const,
+      display: 'flex' as const,
+      flexDirection: 'column' as const,
+      boxShadow: '0 20px 60px rgba(0,0,0,0.55)',
     },
     modalHeader: {
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '1rem 1.25rem', borderBottom: '1px solid var(--ck-border-subtle)',
+      display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const,
+      padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)',
     },
-    modalBody: { display: 'flex', flex: 1, minHeight: 0 },
-    modalLeft: { flex: 1, padding: '1rem 1.25rem', borderRight: '1px solid var(--ck-border-subtle)', display: 'flex', flexDirection: 'column' as const, gap: '0.75rem' },
-    modalRight: { width: '380px', padding: '1rem 1.25rem', flexShrink: 0 },
+    modalBody: { display: 'flex' as const, flex: 1, minHeight: 0 },
+    modalLeft: {
+      flex: 1, padding: '16px 20px', borderRight: '1px solid rgba(255,255,255,0.08)',
+      display: 'flex' as const, flexDirection: 'column' as const, gap: '0.75rem',
+      minWidth: 0,
+    },
+    // Mirrors dashboard's post-edit modal preview column width (660px).
+    modalRight: { width: '660px', padding: '16px 20px', flexShrink: 0, minWidth: 0 },
     modalFooter: {
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0.75rem 1.25rem', borderTop: '1px solid var(--ck-border-subtle)',
+      display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const,
+      padding: '12px 20px', borderTop: '1px solid rgba(255,255,255,0.08)',
       flexWrap: 'wrap' as const, gap: '0.5rem',
     },
     closeBtn: {
-      background: 'none', border: 'none', color: 'var(--ck-text-tertiary)',
-      cursor: 'pointer', fontSize: '1.4rem', padding: '0.25rem',
+      width: '32px', height: '32px',
+      display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'center' as const,
+      background: 'rgba(255,255,255,0.05)', border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '8px', color: 'var(--ck-text-secondary)',
+      cursor: 'pointer' as const, fontSize: '1.1rem', lineHeight: 1, padding: 0,
     },
     textarea: {
       background: 'rgba(255,255,255,0.03)', border: '1px solid var(--ck-border-subtle)',
@@ -176,6 +201,38 @@
       opacity: connected ? 1 : 0.35,
       transition: 'all 0.15s',
     }),
+    // Mirrors content-library.tsx t.pill / t.backendBadge so the post edit
+    // modal uses the same account/platform pill UI as the library composer.
+    pill: (active: boolean, connected: boolean) => ({
+      background: active ? 'rgba(99,179,237,0.16)' : 'rgba(255,255,255,0.03)',
+      border: `1px solid ${active ? 'rgba(99,179,237,0.45)' : 'var(--ck-border-subtle)'}`,
+      borderRadius: '999px',
+      padding: '0.25rem 0.55rem',
+      fontSize: '0.8rem',
+      color: active ? 'rgba(210,235,255,0.95)' : connected ? 'var(--ck-text-secondary)' : 'var(--ck-text-tertiary)',
+      cursor: connected ? 'pointer' as const : 'default' as const,
+      userSelect: 'none' as const,
+      opacity: connected ? 1 : 0.5,
+      display: 'inline-flex' as const,
+      alignItems: 'center' as const,
+      gap: '0.3rem',
+    }),
+    backendBadge: (backend: string) => {
+      const colors: Record<string, string> = {
+        postiz: 'rgba(99,179,237,0.5)',
+        gateway: 'rgba(134,239,172,0.5)',
+        direct: 'rgba(251,191,36,0.5)',
+      };
+      return {
+        display: 'inline-block' as const,
+        background: colors[backend] || 'rgba(100,100,100,0.3)',
+        borderRadius: '999px',
+        padding: '0.05rem 0.35rem',
+        fontSize: '0.6rem',
+        fontWeight: 600,
+        color: 'white',
+      };
+    },
     btnPrimary: {
       background: 'rgba(127,90,240,0.85)', border: 'none', borderRadius: '10px',
       padding: '0.55rem 1rem', color: 'white', fontWeight: 700, cursor: 'pointer',
@@ -265,9 +322,27 @@
     const [modalPublishing, setModalPublishing] = useState(false);
     const [modalError, setModalError] = useState<string | null>(null);
     const [modalSuccess, setModalSuccess] = useState<string | null>(null);
+    // Non-null = the modal is in edit mode for that post id; null = create mode.
+    const [modalEditingId, setModalEditingId] = useState<string | null>(null);
+    const [modalEditingStatus, setModalEditingStatus] = useState<string>('draft');
+    // Cache of mediaId → playable data URL, fetched lazily when a video media
+    // is selected so the preview pane can render <video controls> with it.
+    const [modalMediaDataUrls, setModalMediaDataUrls] = useState<Record<string, string>>({});
+    // Per-account selection — uses each driver's integrationId so two accounts
+    // on the same platform (e.g. two Facebook pages) toggle independently.
+    // modalPlatforms (above) stays as the deduped platform list we serialize
+    // to the API on save.
+    const [modalSelectedAccountIds, setModalSelectedAccountIds] = useState<string[]>([]);
+    // Editable post fields beyond content/platforms/media
+    const [modalEditTags, setModalEditTags] = useState<string>(''); // comma-separated UI
+    const [modalEditCreatedAt, setModalEditCreatedAt] = useState<string>(''); // for status info bar in edit mode
+    // Workflow:* tags from the original post that we preserve on save (the
+    // user only edits human-friendly tags; machine tags must round-trip).
+    const [modalEditMachineTags, setModalEditMachineTags] = useState<string[]>([]);
 
-    // Preview modal
-    const [previewPost, setPreviewPost] = useState<Post | null>(null);
+    // Posts list (below the calendar) — independent status filter from the
+    // calendar grid (which only shows scheduled posts with a date).
+    const [listFilter, setListFilter] = useState<'all' | 'draft' | 'scheduled' | 'published' | 'failed'>('all');
 
     const postizHeaders = useMemo(() => {
       try {
@@ -349,6 +424,31 @@
       Promise.all([loadPosts(), loadDrivers()]).finally(() => setLoading(false));
     }, [loadPosts, loadDrivers]);
 
+    // Fetch playable data URLs for any selected video so the preview pane can
+    // render <video controls>. Images use thumbnailDataUrl directly so this
+    // only fires for video items missing a cached dataUrl.
+    useEffect(() => {
+      let cancelled = false;
+      (async () => {
+        for (const id of modalSelectedMediaIds) {
+          if (modalMediaDataUrls[id]) continue;
+          const item = modalMediaLibrary.find((m: any) => m.id === id);
+          if (!item || !String(item.mimeType || '').startsWith('video/')) continue;
+          try {
+            const res = await fetch(`${apiBase}/media/${id}/file?team=${encodeURIComponent(teamId)}`);
+            const json = await res.json();
+            if (cancelled) return;
+            if (json?.dataUrl) {
+              setModalMediaDataUrls((prev: Record<string, string>) => ({ ...prev, [id]: String(json.dataUrl) }));
+            }
+          } catch {
+            // ignore — preview falls back to poster image
+          }
+        }
+      })();
+      return () => { cancelled = true; };
+    }, [modalSelectedMediaIds, modalMediaLibrary, modalMediaDataUrls, apiBase, teamId]);
+
     // Navigation
     const goToday = () => setAnchor(startOfWeek(today));
     const goPrev = () => setAnchor(view === 'week' ? addDays(anchor, -7) : new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
@@ -365,15 +465,69 @@
     }, [posts]);
 
     // Open create modal for a specific date
-    const openCreateModal = (dateStr?: string) => {
-      const d = dateStr || new Date(today.getFullYear(), today.getMonth(), today.getDate(), 17, 0).toISOString().slice(0, 16);
-      setModalDate(d);
-      setModalContent('');
-      setModalPlatforms([]);
-      setModalMediaUrl('');
-      setModalShowMedia(false);
-      setModalSelectedMediaIds([]);
-      setModalMediaLibrary([]);
+    // Convert an ISO/UTC date to the YYYY-MM-DDTHH:MM local-time string the
+    // browser's <input type=datetime-local> expects.
+    const toLocalDatetimeInputValue = (d: Date): string => {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    // Stable per-account key for selection state. Falls back to platform when
+    // a driver has no integrationId (e.g. an unconnected platform driver).
+    const accountKey = (d: { integrationId?: string; platform: string }) =>
+      String(d.integrationId || d.platform);
+
+    const openCreateModal = (dateStr?: string, postToEdit?: Post) => {
+      if (postToEdit) {
+        // Edit mode: populate every field from the post.
+        const sourceDate = postToEdit.scheduledAt
+          ? new Date(postToEdit.scheduledAt)
+          : new Date(postToEdit.createdAt);
+        setModalDate(toLocalDatetimeInputValue(sourceDate));
+        setModalContent(String(postToEdit.content || ''));
+        const editPlatforms = Array.isArray(postToEdit.platforms) ? [...postToEdit.platforms] : [];
+        setModalPlatforms(editPlatforms);
+        // Edit mode: pre-select every connected account on each platform the
+        // post targets. The API only stores platform strings today, so we
+        // can't restore which specific accounts the post was published to —
+        // start from "all connected accounts on these platforms" and let the
+        // user uncheck any they don't want.
+        setModalSelectedAccountIds(
+          drivers
+            .filter((d: any) => d.connected && editPlatforms.includes(d.platform))
+            .map((d: any) => accountKey(d))
+        );
+        const ids = Array.isArray((postToEdit as any).mediaIds) ? [...(postToEdit as any).mediaIds] : [];
+        setModalSelectedMediaIds(ids);
+        setModalMediaUrl('');
+        setModalShowMedia(false);
+        // Pre-fetch media library so any attached media renders in the preview.
+        if (ids.length > 0) void loadMedia();
+        setModalEditingId(postToEdit.id);
+        setModalEditingStatus(String(postToEdit.status || 'draft'));
+        const allTags = Array.isArray((postToEdit as any).tags) ? (postToEdit as any).tags as string[] : [];
+        // Split out workflow-machine tags so they round-trip on save.
+        const machineTags = allTags.filter((t: string) => String(t).startsWith('workflow:'));
+        const humanTags = allTags.filter((t: string) => !String(t).startsWith('workflow:'));
+        setModalEditMachineTags(machineTags);
+        setModalEditTags(humanTags.join(', '));
+        setModalEditCreatedAt(String(postToEdit.createdAt || ''));
+      } else {
+        const d = dateStr || new Date(today.getFullYear(), today.getMonth(), today.getDate(), 17, 0).toISOString().slice(0, 16);
+        setModalDate(d);
+        setModalContent('');
+        setModalPlatforms([]);
+        setModalSelectedAccountIds([]);
+        setModalMediaUrl('');
+        setModalShowMedia(false);
+        setModalSelectedMediaIds([]);
+        setModalMediaLibrary([]);
+        setModalEditingId(null);
+        setModalEditingStatus('draft');
+        setModalEditTags('');
+        setModalEditCreatedAt('');
+        setModalEditMachineTags([]);
+      }
       setModalError(null);
       setModalSuccess(null);
       setModalOpen(true);
@@ -393,33 +547,65 @@
       try { navigator.clipboard.writeText(content); } catch { /* */ }
     };
 
-    // Save draft from modal
+    // Save from modal — POSTs a new post in create mode, PATCHes the post in
+    // edit mode so the user can update an existing scheduled post inline.
     const modalSaveDraft = async () => {
       if (!modalContent.trim()) return;
       setModalSaving(true);
       setModalError(null);
       try {
-        const res = await fetch(`${apiBase}/posts?team=${encodeURIComponent(teamId)}`, {
-          method: 'POST',
+        const desiredStatus = modalEditingId
+          ? modalEditingStatus
+          : (modalDate ? 'scheduled' : 'draft');
+        // Tags input is comma-separated. Trim and drop empties.
+        const editedTags = modalEditTags
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        // Derive the post's platform list from the selected account IDs. The
+        // post API still stores platforms (not accounts) so multiple accounts
+        // on the same platform collapse into one platform string. The pill UI
+        // remains per-account so future per-account publishing has the data.
+        const derivedPlatforms = Array.from(new Set(
+          modalSelectedAccountIds
+            .map((id: string) => drivers.find((d) => accountKey(d) === id))
+            .filter((d): d is any => Boolean(d))
+            .map((d) => d.platform)
+        ));
+        // Fall back to the current modalPlatforms array if derivation produced
+        // nothing (covers the legacy state where pills weren't selected).
+        const platformsToSend = derivedPlatforms.length > 0
+          ? derivedPlatforms
+          : (modalPlatforms.length > 0 ? modalPlatforms : ['draft']);
+        const body: Record<string, unknown> = {
+          content: modalContent,
+          platforms: platformsToSend,
+          status: desiredStatus,
+          scheduledAt: modalDate || undefined,
+          mediaIds: modalSelectedMediaIds,
+        };
+        if (modalEditingId) body.tags = [...modalEditMachineTags, ...editedTags]; // preserve workflow:* on edit, add human tags
+        const url = modalEditingId
+          ? `${apiBase}/posts/${modalEditingId}?team=${encodeURIComponent(teamId)}`
+          : `${apiBase}/posts?team=${encodeURIComponent(teamId)}`;
+        const res = await fetch(url, {
+          method: modalEditingId ? 'PATCH' : 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            content: modalContent,
-            platforms: modalPlatforms.length > 0 ? modalPlatforms : ['draft'],
-            status: modalDate ? 'scheduled' : 'draft',
-            scheduledAt: modalDate || undefined,
-            mediaIds: modalSelectedMediaIds,
-          }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(`Save failed (${res.status})`);
-        setModalSuccess('Saved!');
+        setModalSuccess(modalEditingId ? 'Updated!' : 'Saved!');
         await loadPosts();
         // Reset all fields so the modal is clean for next post
         setModalContent('');
         setModalPlatforms([]);
+        setModalSelectedAccountIds([]);
         setModalMediaUrl('');
         setModalShowMedia(false);
         setModalSelectedMediaIds([]);
         setModalMediaLibrary([]);
+        setModalEditingId(null);
+        setModalEditingStatus('draft');
         setTimeout(() => { setModalOpen(false); setModalSuccess(null); }, 800);
       } catch (e: any) {
         setModalError(e?.message || 'Failed to save');
@@ -496,15 +682,15 @@
         style: { ...s.postCard, ...statusBorder, ...(compact ? {} : { whiteSpace: 'normal' as const, maxHeight: '50px' }) },
         onMouseEnter: () => setHoverPost(post.id),
         onMouseLeave: () => setHoverPost(null),
-        onClick: () => setPreviewPost(post),
+        onClick: () => openCreateModal(undefined, post),
         title: post.content.slice(0, 150),
       },
         // Actions on hover
         isHover && h('div', { style: s.cardActions },
           h('button', {
-            style: s.cardActionBtn, title: 'Preview',
-            onClick: (e: any) => { e.stopPropagation(); setPreviewPost(post); },
-          }, '👁'),
+            style: s.cardActionBtn, title: 'Edit',
+            onClick: (e: any) => { e.stopPropagation(); openCreateModal(undefined, post); },
+          }, '✎'),
           h('button', {
             style: s.cardActionBtn, title: 'Copy',
             onClick: (e: any) => { e.stopPropagation(); copyPost(post.content); },
@@ -643,63 +829,154 @@
     }
 
     /* =================================================================
-     * PREVIEW MODAL
+     * PREVIEW MODAL — dashboard layout (topbar + two-column),
+     * kitchen design tokens.
      * ================================================================= */
     function PreviewModal() {
       if (!previewPost) return null;
       const p = previewPost;
-      const d = p.scheduledAt ? new Date(p.scheduledAt) : new Date(p.createdAt);
+      const created = new Date(p.createdAt);
+      const scheduled = p.scheduledAt ? new Date(p.scheduledAt) : null;
+      const published = p.publishedAt ? new Date(p.publishedAt) : null;
+      const tags = Array.isArray(p.tags) ? p.tags : [];
+      const visibleTags = tags.filter((t: string) => !String(t).startsWith('workflow:'));
+      const mediaIds = Array.isArray(p.mediaIds) ? p.mediaIds : [];
+
+      const sectionKicker = {
+        fontSize: '0.7rem',
+        color: 'var(--ck-text-tertiary)',
+        textTransform: 'uppercase' as const,
+        letterSpacing: '0.05em',
+        marginBottom: '0.4rem',
+      };
+      const metaCard = {
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid var(--ck-border-subtle)',
+        borderRadius: '12px',
+        padding: '14px',
+      };
+
       return h(Portal, null,
         h('div', { style: s.overlay, onClick: () => setPreviewPost(null) },
-        h('div', {
-          style: { ...s.modal, maxWidth: '550px' },
-          onClick: (e: any) => e.stopPropagation(),
-        },
-          h('div', { style: s.modalHeader },
-            h('div', { style: { fontWeight: 700, fontSize: '1rem', color: 'var(--ck-text-primary)' } }, 'Preview Post'),
-            h('button', { style: s.closeBtn, onClick: () => setPreviewPost(null) }, '×'),
-          ),
-          h('div', { style: { padding: '1.25rem' } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' } },
-              h('div', { style: s.statusDot(p.status) }),
-              h('span', { style: { fontSize: '0.8rem', fontWeight: 600, color: 'var(--ck-text-secondary)', textTransform: 'capitalize' } }, p.status),
-              h('span', { style: { fontSize: '0.75rem', color: 'var(--ck-text-tertiary)' } }, d.toLocaleString()),
-            ),
-            // Platforms
-            p.platforms?.length > 0 && h('div', { style: { display: 'flex', gap: '0.4rem', marginBottom: '0.75rem', flexWrap: 'wrap' } },
-              ...p.platforms.map((pl: string) => {
-                const drv = drivers.find((x) => x.platform === pl);
-                return h('span', {
-                  key: pl,
-                  style: {
-                    background: 'rgba(127,90,240,0.15)', border: '1px solid rgba(127,90,240,0.3)',
-                    borderRadius: '999px', padding: '0.15rem 0.5rem', fontSize: '0.75rem',
-                    color: 'var(--ck-text-secondary)',
-                  },
-                }, drv ? `${drv.icon} ${drv.label}` : pl);
-              }),
-            ),
-            // Content
+          h('div', {
+            style: s.modal,
+            onClick: (e: any) => e.stopPropagation(),
+          },
+            h('button', {
+              style: { ...s.closeBtn, position: 'absolute' as const, top: '12px', right: '12px' },
+              onClick: () => setPreviewPost(null),
+              'aria-label': 'Close',
+            }, '×'),
+            // Topbar
             h('div', {
               style: {
-                ...s.previewPanel,
-                whiteSpace: 'pre-wrap' as const, fontSize: '0.9rem',
-                color: 'var(--ck-text-primary)', lineHeight: '1.5',
+                display: 'grid' as const,
+                gridTemplateColumns: 'minmax(0, 1fr) 360px',
+                gap: '24px',
+                padding: '14px 56px 14px 20px',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
               },
-            }, p.content),
-            // Actions
-            h('div', { style: { display: 'flex', gap: '0.5rem', marginTop: '1rem' } },
-              h('button', {
-                style: s.btnGhost, onClick: () => copyPost(p.content),
-              }, '📋 Copy'),
-              h('button', {
-                style: { ...s.btnGhost, color: 'rgba(248,113,113,0.9)' },
-                onClick: () => { deletePost(p.id); setPreviewPost(null); },
-              }, '🗑 Delete'),
+            },
+              h('div', { style: { fontSize: '1rem', fontWeight: 700, color: 'var(--ck-text-primary)' } }, 'Post Preview'),
+              h('div', { style: { fontSize: '1rem', fontWeight: 600, color: 'var(--ck-text-primary)' } }, 'Details'),
+            ),
+            // Two columns
+            h('div', {
+              style: {
+                display: 'grid' as const,
+                gridTemplateColumns: 'minmax(0, 1fr) 360px',
+                gap: '20px',
+                padding: '20px',
+              },
+            },
+              // LEFT — content
+              h('div', { style: { minWidth: 0 } },
+                h('div', { style: sectionKicker }, 'Content'),
+                h('div', {
+                  style: {
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid var(--ck-border-subtle)',
+                    borderRadius: '12px',
+                    padding: '14px',
+                    whiteSpace: 'pre-wrap' as const,
+                    fontSize: '0.95rem',
+                    color: 'var(--ck-text-primary)',
+                    lineHeight: 1.55,
+                    minHeight: '160px',
+                  },
+                }, p.content || h('span', { style: { color: 'var(--ck-text-tertiary)' } }, '(empty)')),
+                visibleTags.length > 0 && h('div', { style: { marginTop: '14px' } },
+                  h('div', { style: sectionKicker }, 'Tags'),
+                  h('div', { style: { display: 'flex' as const, flexWrap: 'wrap' as const, gap: '0.35rem' } },
+                    ...visibleTags.map((tag: string) => h('span', {
+                      key: tag,
+                      style: {
+                        background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid var(--ck-border-subtle)',
+                        borderRadius: '999px',
+                        padding: '0.15rem 0.55rem',
+                        fontSize: '0.7rem',
+                        color: 'var(--ck-text-secondary)',
+                      },
+                    }, tag)),
+                  ),
+                ),
+                // Actions
+                h('div', { style: { display: 'flex' as const, gap: '0.5rem', marginTop: '20px', flexWrap: 'wrap' as const } },
+                  h('button', {
+                    style: s.btnGhost,
+                    onClick: () => copyPost(p.content),
+                  }, '📋 Copy content'),
+                  h('button', {
+                    style: { ...s.btnGhost, color: 'rgba(248,113,113,0.9)', borderColor: 'rgba(248,113,113,0.3)' },
+                    onClick: () => { void deletePost(p.id); setPreviewPost(null); },
+                  }, '🗑 Delete'),
+                ),
+              ),
+              // RIGHT — meta
+              h('div', { style: { display: 'flex' as const, flexDirection: 'column' as const, gap: '12px' } },
+                h('div', { style: metaCard },
+                  h('div', { style: sectionKicker }, 'Status'),
+                  h('div', { style: { display: 'flex' as const, alignItems: 'center' as const, gap: '0.4rem' } },
+                    h('div', { style: s.statusDot(p.status) }),
+                    h('span', { style: { fontSize: '0.85rem', fontWeight: 600, color: 'var(--ck-text-primary)', textTransform: 'capitalize' as const } }, p.status),
+                  ),
+                  h('div', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', marginTop: '0.5rem', display: 'grid' as const, gap: '0.25rem' } },
+                    h('div', null, `Created: ${created.toLocaleString()}`),
+                    scheduled && h('div', null, `Scheduled: ${scheduled.toLocaleString()}`),
+                    published && h('div', null, `Published: ${published.toLocaleString()}`),
+                    h('div', null, `ID: ${String(p.id).slice(0, 8)}…`),
+                  ),
+                ),
+                p.platforms?.length > 0 && h('div', { style: metaCard },
+                  h('div', { style: sectionKicker }, 'Platforms'),
+                  h('div', { style: { display: 'flex' as const, gap: '0.35rem', flexWrap: 'wrap' as const } },
+                    ...p.platforms.map((pl: string) => {
+                      const drv = drivers.find((x) => x.platform === pl);
+                      return h('span', {
+                        key: pl,
+                        style: {
+                          background: 'rgba(127,90,240,0.15)',
+                          border: '1px solid rgba(127,90,240,0.3)',
+                          borderRadius: '999px',
+                          padding: '0.2rem 0.55rem',
+                          fontSize: '0.75rem',
+                          color: 'var(--ck-text-secondary)',
+                        },
+                      }, drv ? `${drv.icon} ${drv.label}` : pl);
+                    }),
+                  ),
+                ),
+                mediaIds.length > 0 && h('div', { style: metaCard },
+                  h('div', { style: sectionKicker }, `Linked media (${mediaIds.length})`),
+                  h('div', { style: { fontSize: '0.75rem', color: 'var(--ck-text-tertiary)' } },
+                    `${mediaIds.length} attached asset${mediaIds.length === 1 ? '' : 's'}`),
+                ),
+              ),
             ),
           ),
         ),
-      ));
+      );
     }
 
     /* =================================================================
@@ -725,31 +1002,38 @@
         },
           // Header
           h('div', { style: s.modalHeader },
-            h('div', { style: { fontWeight: 700, fontSize: '1.1rem', color: 'var(--ck-text-primary)' } }, 'Create Post'),
+            h('div', { style: { fontWeight: 700, fontSize: '1.1rem', color: 'var(--ck-text-primary)' } }, modalEditingId ? 'Edit Post' : 'Create Post'),
             h('button', { style: s.closeBtn, onClick: () => setModalOpen(false) }, '×'),
           ),
 
           // Body — two columns
           h('div', { style: s.modalBody },
-            // Left — compose
+            // Left — compose (dashboard layout: status bar, labeled sections)
             h('div', { style: s.modalLeft },
-              // Platform circles
-              h('div', { style: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' } },
-                ...drivers.map((d) =>
-                  h('div', {
-                    key: d.platform,
-                    style: s.platformCircle(modalPlatforms.includes(d.platform), d.connected),
-                    onClick: () => {
-                      if (!d.connected) return;
-                      setModalPlatforms((prev: string[]) =>
-                        prev.includes(d.platform) ? prev.filter((x: string) => x !== d.platform) : [...prev, d.platform]
-                      );
-                    },
-                    title: `${d.label}${d.connected ? '' : ' (not connected)'}`,
-                  }, d.icon)
-                ),
+              // Status info bar (edit mode only)
+              modalEditingId && h('div', {
+                style: {
+                  display: 'flex' as const,
+                  flexWrap: 'wrap' as const,
+                  gap: '12px',
+                  padding: '12px 14px',
+                  borderRadius: '14px',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  fontSize: '0.78rem',
+                  color: 'var(--ck-text-secondary)',
+                },
+              },
+                h('span', null, h('strong', { style: { color: 'var(--ck-text-primary)' } }, 'Status: '), modalEditingStatus),
+                modalEditCreatedAt && h('span', null, h('strong', { style: { color: 'var(--ck-text-primary)' } }, 'Created: '), new Date(modalEditCreatedAt).toLocaleDateString()),
+                modalDate && h('span', null, h('strong', { style: { color: 'var(--ck-text-primary)' } }, 'Scheduled: '), new Date(modalDate).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })),
+                h('span', null, h('strong', { style: { color: 'var(--ck-text-primary)' } }, 'Media: '), `${modalSelectedMediaIds.length} asset${modalSelectedMediaIds.length === 1 ? '' : 's'}`),
+                h('span', null, h('strong', { style: { color: 'var(--ck-text-primary)' } }, 'ID: '), String(modalEditingId).slice(0, 8)),
               ),
-              // Textarea
+              // POST CONTENT label
+              h('div', {
+                style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginTop: modalEditingId ? '4px' : 0 },
+              }, 'Post Content'),
               h('textarea', {
                 style: s.textarea,
                 dir: 'ltr',
@@ -758,23 +1042,166 @@
                 placeholder: 'Write something …',
                 autoFocus: true,
               }),
-              // Toolbar
-              h('div', { style: { display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' } },
-                h('button', {
-                  type: 'button',
-                  style: { ...s.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
-                  onClick: async () => {
-                    const next = !modalShowMedia;
-                    setModalShowMedia(next);
-                    if (next) await loadMedia();
+              // ACCOUNTS — same pill UI as the content-library composer
+              h('div', {
+                style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+              }, 'Accounts'),
+              connectedDrivers.length > 0
+                ? h('div', { style: { display: 'flex' as const, flexWrap: 'wrap' as const, gap: '0.5rem' } },
+                    ...connectedDrivers.map((d: any) => {
+                      const key = accountKey(d);
+                      const active = modalSelectedAccountIds.includes(key);
+                      const accountLabel = d.username
+                        ? `@${String(d.username).replace(/^@/, '')}`
+                        : (d.displayName || d.label);
+                      return h('span', {
+                        key,
+                        onClick: () => setModalSelectedAccountIds((prev: string[]) =>
+                          prev.includes(key) ? prev.filter((x: string) => x !== key) : [...prev, key]
+                        ),
+                        style: s.pill(active, true),
+                        role: 'button',
+                        tabIndex: 0,
+                        title: `${d.displayName || d.label}${d.username ? ` (@${d.username})` : ''} via ${d.backend}`,
+                      },
+                        `${d.icon} ${d.label} ${accountLabel}`,
+                        h('span', { style: s.backendBadge(d.backend) }, d.backend),
+                      );
+                    }),
+                    ...drivers.filter((d) => !d.connected).map((d) =>
+                      h('span', {
+                        key: accountKey(d),
+                        style: s.pill(false, false),
+                        title: `${d.label} — not connected`,
+                      }, `${d.icon} ${d.label}`)
+                    ),
+                  )
+                : h('div', { style: { display: 'flex' as const, flexWrap: 'wrap' as const, gap: '0.5rem' } },
+                    ...drivers.map((d) =>
+                      h('span', { key: accountKey(d), style: s.pill(false, false), title: 'Not connected' },
+                        `${d.icon} ${d.label}`
+                      )
+                    ),
+                    h('div', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)' } },
+                      'No platforms connected. Open the Accounts tab to set up Postiz or add accounts.'
+                    ),
+                  ),
+              h('div', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)' } },
+                'Tap a pill to publish/un-publish that account.'),
+              // STATUS + SCHEDULED AT row
+              h('div', { style: { display: 'grid' as const, gridTemplateColumns: '1fr 1fr', gap: '12px' } },
+                h('label', { style: { display: 'flex' as const, flexDirection: 'column' as const, gap: '4px' } },
+                  h('span', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em' } }, 'Status'),
+                  h('select', {
+                    value: modalEditingId ? modalEditingStatus : (modalDate ? 'scheduled' : 'draft'),
+                    onChange: (e: any) => setModalEditingStatus(e.target.value),
+                    disabled: !modalEditingId,
+                    style: { ...s.input, appearance: 'auto' as const, padding: '0.55rem 0.65rem' },
                   },
-                }, '🖼 Insert Media'),
-                charLimit && h('span', {
+                    h('option', { value: 'draft' }, 'Draft'),
+                    h('option', { value: 'scheduled' }, 'Scheduled'),
+                    h('option', { value: 'published' }, 'Published'),
+                    h('option', { value: 'failed' }, 'Failed'),
+                  ),
+                ),
+                h('label', { style: { display: 'flex' as const, flexDirection: 'column' as const, gap: '4px' } },
+                  h('span', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em' } }, 'Scheduled at'),
+                  h('input', {
+                    type: 'datetime-local',
+                    value: modalDate,
+                    onChange: (e: any) => setModalDate(e.target.value),
+                    style: s.input,
+                  }),
+                ),
+              ),
+              // TAGS
+              h('label', { style: { display: 'flex' as const, flexDirection: 'column' as const, gap: '4px' } },
+                h('span', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em' } }, 'Tags'),
+                h('input', {
+                  type: 'text',
+                  value: modalEditTags,
+                  onChange: (e: any) => setModalEditTags(e.target.value),
+                  placeholder: 'promo, haircut, spring',
+                  style: s.input,
+                }),
+              ),
+              // LINKED MEDIA — always visible thumbnails of attached media
+              h('div', null,
+                h('div', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: '6px' } }, 'Linked Media'),
+                modalSelectedMediaIds.length > 0 && h('div', {
                   style: {
-                    fontSize: '0.75rem', marginLeft: 'auto',
-                    color: modalContent.length > charLimit ? 'rgba(248,113,113,0.95)' : 'var(--ck-text-tertiary)',
+                    display: 'grid' as const,
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                    gap: '8px',
+                    marginBottom: '8px',
                   },
-                }, `${modalContent.length}/${charLimit}`),
+                },
+                  ...modalSelectedMediaIds.map((id: string) => {
+                    const item = modalMediaLibrary.find((m: any) => m.id === id);
+                    const thumb = item?.thumbnailDataUrl || '';
+                    const isVideo = String(item?.mimeType || '').startsWith('video/');
+                    return h('div', {
+                      key: id,
+                      style: {
+                        position: 'relative' as const,
+                        aspectRatio: '1',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid var(--ck-border-subtle)',
+                        borderRadius: '12px',
+                        overflow: 'hidden' as const,
+                        display: 'flex' as const,
+                        alignItems: 'center' as const,
+                        justifyContent: 'center' as const,
+                      },
+                    },
+                      thumb
+                        ? h('img', { src: thumb, style: { width: '100%', height: '100%', objectFit: 'cover' as const } })
+                        : h('div', { style: { color: 'var(--ck-text-tertiary)', fontSize: '0.7rem' } }, isVideo ? '🎬' : '🖼'),
+                      isVideo && h('div', {
+                        style: {
+                          position: 'absolute' as const, inset: 0,
+                          display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'center' as const,
+                          color: 'white', fontSize: '1.5rem', textShadow: '0 0 8px rgba(0,0,0,0.6)', pointerEvents: 'none' as const,
+                        },
+                      }, '▶'),
+                      h('button', {
+                        type: 'button',
+                        title: 'Remove',
+                        onClick: (e: any) => { e.stopPropagation(); setModalSelectedMediaIds((prev: string[]) => prev.filter((x: string) => x !== id)); },
+                        style: {
+                          position: 'absolute' as const, top: '4px', right: '4px',
+                          width: '20px', height: '20px',
+                          background: 'rgba(0,0,0,0.7)', border: 'none', borderRadius: '50%',
+                          color: 'white', cursor: 'pointer' as const, fontSize: '0.7rem', lineHeight: 1, padding: 0,
+                        },
+                      }, '×'),
+                    );
+                  }),
+                ),
+                // Action buttons (kitchen tokens)
+                h('div', { style: { display: 'flex' as const, gap: '0.5rem', alignItems: 'center' as const, flexWrap: 'wrap' as const } },
+                  h('button', {
+                    type: 'button',
+                    style: { ...s.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
+                    onClick: async () => {
+                      const next = !modalShowMedia;
+                      setModalShowMedia(next);
+                      if (next) await loadMedia();
+                    },
+                  }, modalShowMedia ? 'Hide library' : 'Add from library'),
+                  h('button', {
+                    type: 'button',
+                    style: { ...s.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem', opacity: modalUploading ? 0.7 : 1 },
+                    onClick: () => modalFileInputRef.current?.click(),
+                    disabled: modalUploading,
+                  }, modalUploading ? 'Uploading…' : 'Upload new'),
+                  charLimit && h('span', {
+                    style: {
+                      fontSize: '0.75rem', marginLeft: 'auto',
+                      color: modalContent.length > charLimit ? 'rgba(248,113,113,0.95)' : 'var(--ck-text-tertiary)',
+                    },
+                  }, `${modalContent.length}/${charLimit}`),
+                ),
               ),
               // Media panel (upload + library + URL)
               modalShowMedia && h('div', {
@@ -945,17 +1372,54 @@
                         style: { color: 'var(--ck-text-tertiary)', fontSize: '0.85rem', fontStyle: 'italic' as const, padding: '1.5rem 0', textAlign: 'center' as const },
                       }, 'Start writing to see a preview'),
                 ),
-                // Media preview (selected library media first, then URL)
+                // Media preview (selected library media first, then URL).
+                // Videos render <video controls> with the lazily-fetched data
+                // URL; images use the inline thumbnailDataUrl directly.
                 (modalSelectedMediaIds.length > 0 || modalMediaUrl) && h('div', null,
                   ...modalSelectedMediaIds.slice(0, 1).map((id: string) => {
                     const item = modalMediaLibrary.find((m: any) => m.id === id);
                     if (!item) return null;
-                    return item.mimeType?.startsWith('video/')
-                      ? h('div', {
+                    const isVideo = String(item.mimeType || '').startsWith('video/');
+                    if (isVideo) {
+                      const videoSrc = modalMediaDataUrls[id];
+                      if (!videoSrc) {
+                        return h('div', {
                           key: id,
-                          style: { background: 'rgba(0,0,0,0.4)', padding: '1.25rem', textAlign: 'center' as const, color: 'var(--ck-text-secondary)' },
-                        }, '🎥 Video')
-                      : h('img', { key: id, src: item.thumbnailDataUrl, style: { width: '100%', display: 'block' } });
+                          style: {
+                            position: 'relative' as const,
+                            background: '#000',
+                            width: '100%',
+                            aspectRatio: '16/9',
+                            display: 'flex' as const,
+                            alignItems: 'center' as const,
+                            justifyContent: 'center' as const,
+                          },
+                        },
+                          item.thumbnailDataUrl && h('img', {
+                            src: item.thumbnailDataUrl,
+                            style: {
+                              position: 'absolute' as const,
+                              inset: 0,
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover' as const,
+                              opacity: 0.6,
+                            },
+                          }),
+                          h('div', {
+                            style: { position: 'relative' as const, color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem' },
+                          }, 'Loading video…'),
+                        );
+                      }
+                      return h('video', {
+                        key: id,
+                        src: videoSrc,
+                        controls: true,
+                        poster: item.thumbnailDataUrl || undefined,
+                        style: { width: '100%', display: 'block', background: '#000' },
+                      });
+                    }
+                    return h('img', { key: id, src: item.thumbnailDataUrl, style: { width: '100%', display: 'block' } });
                   }),
                   modalMediaUrl && h('img', {
                     src: modalMediaUrl,
@@ -1011,7 +1475,7 @@
                 style: { ...s.btnGhost, opacity: modalSaving ? 0.6 : 1 },
                 onClick: () => void modalSaveDraft(),
                 disabled: modalSaving || !modalContent.trim(),
-              }, modalSaving ? 'Saving…' : 'Save as draft'),
+              }, modalSaving ? 'Saving…' : modalEditingId ? 'Save changes' : 'Save as draft'),
               connectedDrivers.length > 0 && modalPlatforms.length > 0 && h('button', {
                 style: { ...s.btnPrimary, opacity: modalPublishing ? 0.6 : 1 },
                 onClick: () => void modalPublish(),
@@ -1065,7 +1529,101 @@
         // Render helpers (not nested React components) to prevent remount/focus loss
         : view === 'week' ? WeekView() : MonthView(),
 
-      PreviewModal(),
+      // Posts list (below the calendar). Filterable by status; calendar above
+      // only shows scheduled posts with a date.
+      !loading && h('div', { style: { ...s.card, marginTop: '1.5rem' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' } },
+          h('div', { style: { fontWeight: 600, color: 'var(--ck-text-primary)' } }, `Posts (${posts.length})`),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' as const } },
+            ...(['all', 'draft', 'scheduled', 'published', 'failed'] as const).map((s2) =>
+              h('button', {
+                key: s2,
+                type: 'button',
+                onClick: () => setListFilter(s2),
+                style: {
+                  ...s.btnGhost,
+                  padding: '0.2rem 0.5rem',
+                  fontSize: '0.7rem',
+                  background: listFilter === s2 ? 'rgba(99,179,237,0.12)' : undefined,
+                  borderColor: listFilter === s2 ? 'rgba(99,179,237,0.35)' : undefined,
+                },
+              }, s2)
+            ),
+            h('button', {
+              type: 'button',
+              onClick: () => void loadPosts(),
+              title: 'Refresh',
+              style: { ...s.btnGhost, padding: '0.2rem 0.5rem', fontSize: '0.7rem' },
+            }, '↻'),
+          ),
+        ),
+        (() => {
+          const filtered = listFilter === 'all'
+            ? posts
+            : posts.filter((p) => p.status === listFilter);
+          if (filtered.length === 0) {
+            return h('div', { style: { textAlign: 'center' as const, padding: '1.5rem', color: 'var(--ck-text-tertiary)', fontSize: '0.85rem' } },
+              listFilter === 'all' ? 'No posts yet.' : `No ${listFilter} posts.`,
+            );
+          }
+          return h('div', { style: { display: 'flex', flexDirection: 'column' as const, gap: '0.5rem' } },
+            ...filtered.map((p) =>
+              h('div', {
+                key: p.id,
+                onClick: () => openCreateModal(undefined, p),
+                style: {
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--ck-border-subtle)',
+                  borderRadius: '8px',
+                  padding: '0.65rem 0.85rem',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s',
+                },
+                onMouseEnter: (e: any) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; },
+                onMouseLeave: (e: any) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; },
+              },
+                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.35rem' } },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.4rem' } },
+                    h('div', { style: s.statusDot(p.status) }),
+                    h('span', { style: { fontSize: '0.75rem', fontWeight: 600, color: 'var(--ck-text-secondary)', textTransform: 'capitalize' as const } }, p.status),
+                    h('span', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)' } }, new Date(p.createdAt).toLocaleString()),
+                  ),
+                  p.scheduledAt && h('span', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)' } },
+                    `⏱ ${new Date(p.scheduledAt).toLocaleString()}`),
+                ),
+                h('div', {
+                  style: {
+                    fontSize: '0.85rem',
+                    color: 'var(--ck-text-primary)',
+                    whiteSpace: 'pre-wrap' as const,
+                    maxHeight: '4.5rem',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    lineHeight: 1.4,
+                  },
+                }, p.content),
+                p.platforms?.length > 0 && h('div', { style: { display: 'flex', gap: '0.3rem', marginTop: '0.4rem', flexWrap: 'wrap' as const } },
+                  ...p.platforms.map((pl: string) => {
+                    const drv = drivers.find((d) => d.platform === pl);
+                    return h('span', {
+                      key: pl,
+                      style: {
+                        background: 'rgba(127,90,240,0.12)',
+                        border: '1px solid rgba(127,90,240,0.25)',
+                        borderRadius: '999px',
+                        padding: '0.1rem 0.45rem',
+                        fontSize: '0.7rem',
+                        color: 'var(--ck-text-secondary)',
+                      },
+                    }, drv ? `${drv.icon} ${pl}` : pl);
+                  }),
+                ),
+              )
+            ),
+          );
+        })(),
+      ),
+
       CreateModal(),
     );
   }

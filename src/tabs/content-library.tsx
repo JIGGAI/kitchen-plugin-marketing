@@ -105,6 +105,69 @@
       color: pct > 100 ? 'rgba(248,113,113,0.95)' : pct > 90 ? 'rgba(251,191,36,0.9)' : 'var(--ck-text-tertiary)',
       fontSize: '0.75rem',
     }),
+    // Modal — uses kitchen design tokens (matches s.overlay / s.modal in
+    // content-calendar.tsx) but follows dashboard's topbar + two-column
+    // layout pattern for content.
+    modalOverlay: {
+      position: 'fixed' as const,
+      inset: '0',
+      background: 'rgba(0,0,0,0.65)',
+      display: 'flex' as const,
+      alignItems: 'flex-start' as const,
+      justifyContent: 'center' as const,
+      padding: '16px',
+      zIndex: 9999,
+      backdropFilter: 'blur(4px)',
+      WebkitBackdropFilter: 'blur(4px)',
+    },
+    modalCard: {
+      position: 'relative' as const,
+      // Match plugin tab page card color (kitchen --ck-bg-soft, #121b29).
+      background: 'var(--ck-bg-soft, #121b29)',
+      border: '1px solid var(--ck-border-subtle)',
+      borderRadius: '14px',
+      width: '96vw',
+      maxWidth: '1200px',
+      maxHeight: '92vh',
+      overflow: 'auto' as const,
+      padding: '20px',
+    },
+    modalCloseBtn: {
+      position: 'absolute' as const,
+      top: '12px',
+      right: '12px',
+      background: 'none',
+      border: 'none',
+      color: 'var(--ck-text-tertiary)',
+      cursor: 'pointer' as const,
+      fontSize: '1.4rem',
+      padding: '0.25rem 0.5rem',
+      lineHeight: 1,
+    },
+    modalTopbar: {
+      display: 'grid' as const,
+      gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+      gap: '24px',
+      paddingRight: '40px',
+      paddingBottom: '14px',
+      marginBottom: '16px',
+      borderBottom: '1px solid rgba(255,255,255,0.08)',
+    },
+    modalTopbarTitle: {
+      fontSize: '1rem',
+      fontWeight: 700,
+      color: 'var(--ck-text-primary)',
+    },
+    modalTopbarLabel: {
+      fontSize: '1rem',
+      fontWeight: 600,
+      color: 'var(--ck-text-primary)',
+    },
+    modalTwoCol: {
+      display: 'grid' as const,
+      gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+      gap: '20px',
+    },
   };
 
   type DriverInfo = {
@@ -160,6 +223,22 @@
     const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+    // Media library paging
+    const MEDIA_PAGE_SIZE = 24;
+    const [mediaPage, setMediaPage] = useState(0);
+    const [mediaTotal, setMediaTotal] = useState(0);
+    const [mediaHasMore, setMediaHasMore] = useState(false);
+
+    // Media-detail modal state
+    const [mediaModalItem, setMediaModalItem] = useState<any | null>(null);
+    const [mediaModalUrl, setMediaModalUrl] = useState<string>('');
+    const [mediaEditName, setMediaEditName] = useState('');
+    const [mediaEditAlt, setMediaEditAlt] = useState('');
+    const [mediaEditTagsInput, setMediaEditTagsInput] = useState(''); // comma-separated UI
+    const [mediaSaving, setMediaSaving] = useState(false);
+    const [mediaDeleting, setMediaDeleting] = useState(false);
+    const [mediaModalError, setMediaModalError] = useState<string | null>(null);
+
     const successTimeout = useRef<any>(null);
 
     const postizHeaders = useMemo(() => {
@@ -197,11 +276,14 @@
 
     const loadMedia = useCallback(async () => {
       try {
-        const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=100`);
+        const offset = mediaPage * MEDIA_PAGE_SIZE;
+        const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=${MEDIA_PAGE_SIZE}&offset=${offset}`);
         const json = await res.json();
         setMediaLibrary(Array.isArray(json.data) ? json.data : []);
+        setMediaTotal(typeof json.total === 'number' ? json.total : 0);
+        setMediaHasMore(Boolean(json.hasMore));
       } catch { /* ignore */ }
-    }, [apiBase, teamId]);
+    }, [apiBase, teamId, mediaPage]);
 
     const handleFileUpload = useCallback(async (files: FileList | null) => {
       if (!files || files.length === 0) return;
@@ -252,10 +334,88 @@
       );
     };
 
+    const openMediaModal = useCallback(async (item: any) => {
+      setMediaModalItem(item);
+      setMediaModalUrl('');
+      setMediaModalError(null);
+      setMediaEditName(String(item.originalName || item.filename || ''));
+      setMediaEditAlt(String(item.alt || ''));
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      setMediaEditTagsInput(tags.join(', '));
+      // Fetch the dataUrl for inline preview / playback
+      try {
+        const res = await fetch(`${apiBase}/media/${item.id}/file?team=${encodeURIComponent(teamId)}`);
+        const json = await res.json();
+        if (json?.dataUrl) setMediaModalUrl(String(json.dataUrl));
+      } catch {
+        // Fall back to item.url; not all media exposes a viewable URL
+        if (item.url) setMediaModalUrl(String(item.url));
+      }
+    }, [apiBase, teamId]);
+
+    const closeMediaModal = useCallback(() => {
+      setMediaModalItem(null);
+      setMediaModalUrl('');
+      setMediaModalError(null);
+    }, []);
+
+    const saveMediaModal = useCallback(async () => {
+      if (!mediaModalItem) return;
+      setMediaSaving(true);
+      setMediaModalError(null);
+      try {
+        const tags = mediaEditTagsInput
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const body = {
+          originalName: mediaEditName.trim() || undefined,
+          alt: mediaEditAlt,
+          tags,
+        };
+        const res = await fetch(`${apiBase}/media/${mediaModalItem.id}?team=${encodeURIComponent(teamId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err && (err.error || err.message)) || `Save failed (HTTP ${res.status})`);
+        }
+        await loadMedia();
+        closeMediaModal();
+      } catch (e: any) {
+        setMediaModalError(String(e?.message || e));
+      } finally {
+        setMediaSaving(false);
+      }
+    }, [apiBase, teamId, mediaModalItem, mediaEditName, mediaEditAlt, mediaEditTagsInput, loadMedia, closeMediaModal]);
+
+    const deleteMediaModal = useCallback(async () => {
+      if (!mediaModalItem) return;
+      if (!window.confirm(`Delete "${mediaModalItem.originalName || mediaModalItem.filename}"? This cannot be undone.`)) return;
+      setMediaDeleting(true);
+      setMediaModalError(null);
+      try {
+        await deleteMedia(mediaModalItem.id);
+        closeMediaModal();
+      } catch (e: any) {
+        setMediaModalError(String(e?.message || e));
+      } finally {
+        setMediaDeleting(false);
+      }
+    }, [mediaModalItem, deleteMedia, closeMediaModal]);
+
     useEffect(() => {
       setLoading(true);
-      Promise.all([loadDrivers(), loadPosts(), loadMedia()]).finally(() => setLoading(false));
-    }, [loadDrivers, loadPosts, loadMedia]);
+      Promise.all([loadDrivers(), loadPosts()]).finally(() => setLoading(false));
+    }, [loadDrivers, loadPosts]);
+
+    // loadMedia identity changes when mediaPage changes, so this effect both
+    // does the initial load and re-fires whenever the user clicks Prev/Next.
+    useEffect(() => {
+      void loadMedia();
+    }, [loadMedia]);
 
     const connectedDrivers = useMemo(() => drivers.filter((d) => d.connected), [drivers]);
     const disconnectedDrivers = useMemo(() => drivers.filter((d) => !d.connected), [drivers]);
@@ -816,59 +976,299 @@
         ),
       ),
 
-      // ---- Posts list ----
-      h('div', { style: t.card },
-        h('div', { className: 'flex items-center justify-between mb-3' },
-          h('div', { className: 'text-sm font-medium', style: t.text }, 'Posts'),
-          h('div', { className: 'flex items-center gap-2' },
-            ...['all', 'draft', 'scheduled', 'published', 'failed'].map((s) =>
-              h('button', {
-                key: s,
-                type: 'button',
-                onClick: () => setFilterStatus(s),
-                style: {
-                  ...t.btnGhost,
-                  padding: '0.2rem 0.45rem',
-                  fontSize: '0.7rem',
-                  background: filterStatus === s ? 'rgba(99,179,237,0.12)' : undefined,
-                  borderColor: filterStatus === s ? 'rgba(99,179,237,0.35)' : undefined,
-                },
-              }, s)
+      // ---- Media library grid ----
+      (() => {
+        const totalPages = Math.max(1, Math.ceil(mediaTotal / MEDIA_PAGE_SIZE));
+        const currentPageDisplay = mediaPage + 1;
+        const startIdx = mediaTotal === 0 ? 0 : mediaPage * MEDIA_PAGE_SIZE + 1;
+        const endIdx = Math.min(mediaTotal, mediaPage * MEDIA_PAGE_SIZE + mediaLibrary.length);
+        return h('div', { style: t.card },
+          h('div', { className: 'flex items-center justify-between mb-3' },
+            h('div', { className: 'text-sm font-medium', style: t.text },
+              mediaTotal > 0 ? `Media (${startIdx}-${endIdx} of ${mediaTotal})` : `Media (${mediaTotal})`
             ),
-            h('button', { type: 'button', onClick: () => void loadPosts(), style: { ...t.btnGhost, padding: '0.2rem 0.45rem', fontSize: '0.7rem' } }, '↻'),
+            h('div', { className: 'flex items-center gap-2' },
+              h('button', {
+                type: 'button',
+                onClick: () => fileInputRef.current?.click(),
+                style: { ...t.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
+              }, '+ Upload'),
+              h('button', {
+                type: 'button',
+                onClick: () => void loadMedia(),
+                title: 'Refresh',
+                style: { ...t.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
+              }, '↻'),
+            ),
           ),
-        ),
         loading
           ? h('div', { className: 'py-6 text-center text-sm', style: t.faint }, 'Loading…')
-          : filteredPosts.length === 0
-            ? h('div', { className: 'py-6 text-center text-sm', style: t.faint },
-                filterStatus === 'all' ? 'No posts yet. Compose your first post above!' : `No ${filterStatus} posts.`
-              )
-            : h('div', { className: 'space-y-2' },
-              ...filteredPosts.map((p) =>
-                h('div', { key: p.id, style: { ...t.card, padding: '0.75rem' } },
-                  h('div', { className: 'flex items-center justify-between gap-2' },
-                    h('div', { className: 'flex items-center gap-2' },
-                      h('span', { style: t.statusBadge(p.status) }, p.status),
-                      h('span', { className: 'text-xs', style: t.faint }, new Date(p.createdAt).toLocaleString()),
-                    ),
-                    p.scheduledAt && h('div', { className: 'text-xs', style: t.muted }, `⏱ ${new Date(p.scheduledAt).toLocaleString()}`),
-                  ),
+          : mediaLibrary.length === 0
+            ? h('div', { className: 'py-6 text-center text-sm', style: t.faint }, 'No media yet. Upload images or videos above.')
+            : h('div', {
+                style: {
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                  gap: '0.65rem',
+                },
+              },
+              ...mediaLibrary.map((item: any) => {
+                const isVideo = String(item.mimeType || '').startsWith('video/');
+                // The API returns a base64 data URL on item.thumbnailDataUrl for
+                // both images and (poster-frame) videos. item.url points at the
+                // /file endpoint which returns a JSON envelope, not raw bytes,
+                // so it can't be used directly as <img src>.
+                const thumb = String(item.thumbnailDataUrl || item.thumbnailUrl || '');
+                return h('div', {
+                  key: item.id,
+                  onClick: () => void openMediaModal(item),
+                  style: {
+                    position: 'relative' as const,
+                    aspectRatio: '1',
+                    background: 'rgba(0,0,0,0.35)',
+                    border: '1px solid var(--ck-border-subtle)',
+                    borderRadius: '10px',
+                    overflow: 'hidden' as const,
+                    cursor: 'pointer' as const,
+                    display: 'flex' as const,
+                    alignItems: 'center' as const,
+                    justifyContent: 'center' as const,
+                  },
+                },
+                  thumb
+                    ? h('img', {
+                        src: thumb,
+                        alt: item.originalName || '',
+                        style: { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
+                      })
+                    : h('div', {
+                        style: { color: 'var(--ck-text-tertiary)', fontSize: '0.7rem', textAlign: 'center' as const, padding: '0.5rem' },
+                      }, isVideo ? '🎬' : '🖼'),
+                  isVideo && h('div', {
+                    style: {
+                      position: 'absolute' as const,
+                      inset: 0,
+                      display: 'flex' as const,
+                      alignItems: 'center' as const,
+                      justifyContent: 'center' as const,
+                      background: 'rgba(0,0,0,0.25)',
+                      color: 'white',
+                      fontSize: '2rem',
+                      pointerEvents: 'none' as const,
+                    },
+                  }, '▶'),
                   h('div', {
-                    className: 'mt-2 whitespace-pre-wrap text-sm',
-                    style: { ...t.text, maxHeight: '120px', overflow: 'hidden', textOverflow: 'ellipsis' },
-                  }, p.content),
-                  p.platforms?.length > 0 && h('div', { className: 'mt-2 flex flex-wrap gap-1' },
-                    ...p.platforms.map((pl) => {
-                      const driver = drivers.find((d) => d.platform === pl);
-                      return h('span', { key: pl, style: t.pill(true, true) },
-                        driver ? `${driver.icon} ${pl}` : pl
-                      );
+                    style: {
+                      position: 'absolute' as const,
+                      left: 0, right: 0, bottom: 0,
+                      padding: '0.35rem 0.5rem',
+                      background: 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))',
+                      color: 'white',
+                      fontSize: '0.7rem',
+                      whiteSpace: 'nowrap' as const,
+                      overflow: 'hidden' as const,
+                      textOverflow: 'ellipsis',
+                    },
+                  }, item.originalName || item.filename),
+                );
+              })
+            ),
+          // Pager
+          totalPages > 1 && h('div', {
+            style: {
+              display: 'flex' as const,
+              alignItems: 'center' as const,
+              justifyContent: 'space-between' as const,
+              gap: '0.5rem',
+              marginTop: '0.85rem',
+              paddingTop: '0.65rem',
+              borderTop: '1px solid var(--ck-border-subtle)',
+            },
+          },
+            h('button', {
+              type: 'button',
+              onClick: () => setMediaPage((p: number) => Math.max(0, p - 1)),
+              disabled: mediaPage === 0,
+              style: {
+                ...t.btnGhost,
+                padding: '0.3rem 0.65rem',
+                fontSize: '0.75rem',
+                opacity: mediaPage === 0 ? 0.4 : 1,
+                cursor: mediaPage === 0 ? 'not-allowed' as const : 'pointer' as const,
+              },
+            }, '← Prev'),
+            h('span', {
+              style: { fontSize: '0.75rem', color: 'var(--ck-text-secondary)' },
+            }, `Page ${currentPageDisplay} of ${totalPages}`),
+            h('button', {
+              type: 'button',
+              onClick: () => setMediaPage((p: number) => p + 1),
+              disabled: !mediaHasMore,
+              style: {
+                ...t.btnGhost,
+                padding: '0.3rem 0.65rem',
+                fontSize: '0.75rem',
+                opacity: !mediaHasMore ? 0.4 : 1,
+                cursor: !mediaHasMore ? 'not-allowed' as const : 'pointer' as const,
+              },
+            }, 'Next →'),
+          ),
+        );
+      })(),
+
+      // ---- Media detail modal — dashboard layout (topbar + two-column),
+      // kitchen design tokens. ----
+      mediaModalItem && h('div', { style: t.modalOverlay, onClick: closeMediaModal },
+        h('div', { style: t.modalCard, onClick: (e: any) => e.stopPropagation() },
+          h('button', { type: 'button', onClick: closeMediaModal, style: t.modalCloseBtn, 'aria-label': 'Close' }, '×'),
+          // Topbar: title left, "Details" label right
+          h('div', { style: t.modalTopbar },
+            h('div', { style: t.modalTopbarTitle }, 'Media Asset'),
+            h('div', { style: t.modalTopbarLabel }, 'Details'),
+          ),
+          // Two columns
+          h('div', { style: t.modalTwoCol },
+            // LEFT — preview
+            h('div', null,
+              h('div', {
+                style: {
+                  background: 'rgba(0,0,0,0.4)',
+                  border: '1px solid var(--ck-border-subtle)',
+                  borderRadius: '12px',
+                  padding: '0.5rem',
+                  minHeight: '280px',
+                  display: 'flex' as const,
+                  alignItems: 'center' as const,
+                  justifyContent: 'center' as const,
+                },
+              },
+                !mediaModalUrl
+                  ? h('div', { style: { color: 'var(--ck-text-tertiary)', fontSize: '0.85rem' } }, 'Loading preview…')
+                  : String(mediaModalItem.mimeType || '').startsWith('video/')
+                    ? h('video', {
+                        src: mediaModalUrl,
+                        controls: true,
+                        style: { maxWidth: '100%', maxHeight: '60vh', borderRadius: '8px' },
+                      })
+                    : h('img', {
+                        src: mediaModalUrl,
+                        alt: mediaModalItem.alt || mediaModalItem.originalName || '',
+                        style: { maxWidth: '100%', maxHeight: '60vh', borderRadius: '8px', objectFit: 'contain' as const, display: 'block' },
+                      }),
+              ),
+              mediaModalItem.prompt && h('div', { style: { marginTop: '12px' } },
+                h('div', { style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: '0.35rem' } }, 'Generation prompt'),
+                h('div', {
+                  style: {
+                    ...t.input,
+                    fontSize: '0.8rem',
+                    color: 'var(--ck-text-secondary)',
+                    whiteSpace: 'pre-wrap' as const,
+                    maxHeight: '8rem',
+                    overflow: 'auto' as const,
+                    cursor: 'default' as const,
+                  },
+                }, String(mediaModalItem.prompt)),
+              ),
+            ),
+            // RIGHT — meta + edit form
+            h('div', null,
+              // Heading: filename
+              h('h2', {
+                style: {
+                  fontSize: '1.1rem',
+                  fontWeight: 700,
+                  color: 'var(--ck-text-primary)',
+                  marginTop: 0,
+                  marginBottom: '0.5rem',
+                  wordBreak: 'break-word' as const,
+                },
+              }, mediaModalItem.originalName || mediaModalItem.filename || 'Untitled media'),
+              // Meta line: type · size · dimensions
+              h('div', {
+                style: {
+                  fontSize: '0.75rem',
+                  color: 'var(--ck-text-tertiary)',
+                  display: 'flex' as const,
+                  flexWrap: 'wrap' as const,
+                  gap: '0.4rem',
+                  marginBottom: '1rem',
+                },
+              },
+                h('span', null, mediaModalItem.mimeType || 'Unknown type'),
+                mediaModalItem.size && h('span', null, `· ${(Number(mediaModalItem.size) / 1024 / 1024).toFixed(2)} MB`),
+                mediaModalItem.width && mediaModalItem.height && h('span', null, `· ${mediaModalItem.width}×${mediaModalItem.height}`),
+                mediaModalItem.createdAt && h('span', null, `· Created ${new Date(mediaModalItem.createdAt).toLocaleDateString()}`),
+              ),
+              // Section: Edit asset
+              h('div', {
+                style: {
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--ck-border-subtle)',
+                  borderRadius: '12px',
+                  padding: '14px',
+                },
+              },
+                h('div', {
+                  style: { fontSize: '0.7rem', color: 'var(--ck-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: '0.65rem' },
+                }, 'Edit asset'),
+                h('div', { style: { display: 'grid', gap: '0.6rem' } },
+                  h('label', { style: { display: 'block' } },
+                    h('span', { style: { display: 'block', fontSize: '0.75rem', color: 'var(--ck-text-secondary)', marginBottom: '0.25rem' } }, 'Name'),
+                    h('input', {
+                      type: 'text',
+                      value: mediaEditName,
+                      onChange: (e: any) => setMediaEditName(e.target.value),
+                      style: t.input,
                     }),
                   ),
-                )
-              )
+                  h('label', { style: { display: 'block' } },
+                    h('span', { style: { display: 'block', fontSize: '0.75rem', color: 'var(--ck-text-secondary)', marginBottom: '0.25rem' } }, 'Alt text'),
+                    h('input', {
+                      type: 'text',
+                      value: mediaEditAlt,
+                      onChange: (e: any) => setMediaEditAlt(e.target.value),
+                      placeholder: 'Accessible description',
+                      style: t.input,
+                    }),
+                  ),
+                  h('label', { style: { display: 'block' } },
+                    h('span', { style: { display: 'block', fontSize: '0.75rem', color: 'var(--ck-text-secondary)', marginBottom: '0.25rem' } }, 'Tags'),
+                    h('input', {
+                      type: 'text',
+                      value: mediaEditTagsInput,
+                      onChange: (e: any) => setMediaEditTagsInput(e.target.value),
+                      placeholder: 'promo, haircut, spring',
+                      style: t.input,
+                    }),
+                  ),
+                  mediaModalError && h('div', {
+                    style: { color: 'rgba(248,113,113,0.95)', fontSize: '0.8rem' },
+                  }, mediaModalError),
+                  h('div', { style: { display: 'flex', gap: '0.5rem', justifyContent: 'space-between', marginTop: '0.5rem', flexWrap: 'wrap' as const } },
+                    h('button', {
+                      type: 'button',
+                      onClick: () => void saveMediaModal(),
+                      disabled: mediaSaving || mediaDeleting,
+                      style: { ...t.btnPrimary, opacity: (mediaSaving || mediaDeleting) ? 0.6 : 1 },
+                    }, mediaSaving ? 'Saving…' : 'Save changes'),
+                    h('button', {
+                      type: 'button',
+                      onClick: () => void deleteMediaModal(),
+                      disabled: mediaSaving || mediaDeleting,
+                      style: {
+                        ...t.btnGhost,
+                        color: 'rgba(248,113,113,0.9)',
+                        borderColor: 'rgba(248,113,113,0.3)',
+                        opacity: (mediaSaving || mediaDeleting) ? 0.6 : 1,
+                      },
+                    }, mediaDeleting ? 'Deleting…' : 'Delete asset'),
+                  ),
+                ),
+              ),
             ),
+          ),
+        ),
       ),
     );
   }

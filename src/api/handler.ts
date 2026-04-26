@@ -1189,7 +1189,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
-  // PATCH /media/:id — update alt and tags
+  // PATCH /media/:id — update originalName (display name), alt, and tags
   if (mediaIdMatch && req.method === 'PATCH') {
     try {
       const { db } = initializeDatabase(teamId);
@@ -1199,8 +1199,12 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .where(and(eq(schema.media.id, mediaIdMatch[1]), eq(schema.media.teamId, teamId)));
       if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
 
-      const body = (req.body || {}) as { alt?: string | null; tags?: string[] };
+      const body = (req.body || {}) as { alt?: string | null; tags?: string[]; originalName?: string };
       const updates: Record<string, unknown> = {};
+      if (body.originalName !== undefined) {
+        const name = String(body.originalName).trim();
+        if (name) updates.originalName = name;
+      }
       if (body.alt !== undefined) updates.alt = body.alt || null;
       if (body.tags !== undefined) updates.tags = JSON.stringify(Array.isArray(body.tags) ? body.tags : []);
       if (!Object.keys(updates).length) {
