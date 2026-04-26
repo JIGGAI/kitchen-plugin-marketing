@@ -499,16 +499,22 @@
         setModalContent(String(postToEdit.content || ''));
         const editPlatforms = Array.isArray(postToEdit.platforms) ? [...postToEdit.platforms] : [];
         setModalPlatforms(editPlatforms);
-        // Edit mode: pre-select every connected account on each platform the
-        // post targets. The API only stores platform strings today, so we
-        // can't restore which specific accounts the post was published to —
-        // start from "all connected accounts on these platforms" and let the
-        // user uncheck any they don't want.
-        setModalSelectedAccountIds(
-          drivers
-            .filter((d: any) => d.connected && editPlatforms.includes(d.platform))
-            .map((d: any) => accountKey(d))
-        );
+        // Edit mode: pre-select ONE connected account per platform the post
+        // targets — the first one in the drivers list. The API only stores
+        // platform strings today, so we can't recover which specific account
+        // a post was originally published to; pre-checking every account on
+        // the platform made multiple pills appear linked. The user can add
+        // or swap accounts after the modal opens.
+        const seenPlatforms = new Set<string>();
+        const initialAccountIds: string[] = [];
+        for (const d of drivers as any[]) {
+          if (!d.connected) continue;
+          if (!editPlatforms.includes(d.platform)) continue;
+          if (seenPlatforms.has(d.platform)) continue;
+          seenPlatforms.add(d.platform);
+          initialAccountIds.push(accountKey(d));
+        }
+        setModalSelectedAccountIds(initialAccountIds);
         const ids = Array.isArray((postToEdit as any).mediaIds) ? [...(postToEdit as any).mediaIds] : [];
         setModalSelectedMediaIds(ids);
         setModalMediaUrl('');
