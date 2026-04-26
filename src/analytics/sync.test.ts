@@ -76,15 +76,21 @@ describe('syncPostMetrics', () => {
     cleanupDbFile(teamId);
   });
 
+  // Helper: build a Postiz time-series response. The API returns arrays of
+  // `{label, data: [{total, date}], percentageChange}`. We use a single
+  // most-recent day per metric since normalize() picks the latest total.
+  const tsResponse = (metrics: Record<string, number>) =>
+    Object.entries(metrics).map(([label, total]) => ({
+      label,
+      data: [{ total, date: '2026-04-26' }],
+      percentageChange: 0,
+    }));
+
   it('inserts a new post_metrics row when none exists', async () => {
     await seedDb(teamId, postId, 'postiz-abc');
-    vi.mocked(getPostAnalytics).mockResolvedValue({
-      postId: 'postiz-abc',
-      impressions: 1000,
-      likes: 50,
-      comments: 10,
-      shares: 5,
-    });
+    vi.mocked(getPostAnalytics).mockResolvedValue(
+      tsResponse({ Impressions: 1000, Likes: 50, Comments: 10, Shares: 5 })
+    );
 
     const result = await syncPostMetrics(teamId, postId, fakeConfig);
     expect(result.synced).toBe(1);
@@ -101,14 +107,14 @@ describe('syncPostMetrics', () => {
 
   it('updates an existing post_metrics row (upsert)', async () => {
     await seedDb(teamId, postId, 'postiz-abc');
-    vi.mocked(getPostAnalytics).mockResolvedValue({
-      postId: 'postiz-abc', impressions: 100, likes: 10,
-    });
+    vi.mocked(getPostAnalytics).mockResolvedValue(
+      tsResponse({ Impressions: 100, Likes: 10 })
+    );
     await syncPostMetrics(teamId, postId, fakeConfig);
 
-    vi.mocked(getPostAnalytics).mockResolvedValue({
-      postId: 'postiz-abc', impressions: 500, likes: 60,
-    });
+    vi.mocked(getPostAnalytics).mockResolvedValue(
+      tsResponse({ Impressions: 500, Likes: 60 })
+    );
     const result = await syncPostMetrics(teamId, postId, fakeConfig);
     expect(result.synced).toBe(1);
 
@@ -123,9 +129,9 @@ describe('syncPostMetrics', () => {
 
   it('updates syncedAt on the publishes row after success', async () => {
     await seedDb(teamId, postId, 'postiz-abc');
-    vi.mocked(getPostAnalytics).mockResolvedValue({
-      postId: 'postiz-abc', impressions: 10,
-    });
+    vi.mocked(getPostAnalytics).mockResolvedValue(
+      tsResponse({ Impressions: 10 })
+    );
 
     await syncPostMetrics(teamId, postId, fakeConfig);
 
@@ -176,7 +182,9 @@ describe('syncPostsBatch', () => {
     await seedDb(teamId, p2, 'postiz-p2');
 
     vi.mocked(getPostAnalytics).mockImplementation(async (_cfg, extId) => {
-      if (extId === 'postiz-p1') return { postId: extId, impressions: 100 };
+      if (extId === 'postiz-p1') {
+        return [{ label: 'Impressions', data: [{ total: 100, date: '2026-04-26' }], percentageChange: 0 }];
+      }
       if (extId === 'postiz-p2') return null;
       return null;
     });
