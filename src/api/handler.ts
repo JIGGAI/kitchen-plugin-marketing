@@ -775,12 +775,18 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const newPlatforms = body.platforms !== undefined ? body.platforms : oldPlatforms;
       const platformsChanged = JSON.stringify([...oldPlatforms].sort()) !== JSON.stringify([...newPlatforms].sort());
 
+      // Status flipping back to draft means "pull this off Postiz" — the
+      // cascade below deletes the external posts and the existing draft
+      // guard at the republish step (~line 897) prevents re-publishing.
+      const statusChangedToDraft = body.status === 'draft' && post.status !== 'draft';
+
       const publishRelevantChange =
         (body.content !== undefined && body.content !== post.content) ||
         ((body as any).mediaIds !== undefined && JSON.stringify((body as any).mediaIds) !== (post.mediaIds || '[]')) ||
         (body.scheduledAt !== undefined && (body.scheduledAt || null) !== (post.scheduledAt || null)) ||
         accountTagsChanged ||
-        platformsChanged;
+        platformsChanged ||
+        statusChangedToDraft;
 
       if (body.content !== undefined) updates.content = body.content;
       if (body.platforms !== undefined) updates.platforms = JSON.stringify(body.platforms);
