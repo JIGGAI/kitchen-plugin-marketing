@@ -148,7 +148,9 @@
       borderRadius: '16px',
       width: 'min(1600px, calc(100vw - 32px))',
       maxHeight: 'calc(100vh - 32px)',
-      overflow: 'auto' as const,
+      // The card itself is a flex column that DOESN'T scroll. The body
+      // children below scroll independently so the footer stays anchored.
+      overflow: 'hidden' as const,
       display: 'flex' as const,
       flexDirection: 'column' as const,
       boxShadow: '0 20px 60px rgba(0,0,0,0.55)',
@@ -156,19 +158,29 @@
     modalHeader: {
       display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const,
       padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)',
+      flexShrink: 0,
     },
+    // Body grows to fill remaining card height; its column children scroll.
     modalBody: { display: 'flex' as const, flex: 1, minHeight: 0 },
     modalLeft: {
       flex: 1, padding: '16px 20px', borderRight: '1px solid rgba(255,255,255,0.08)',
       display: 'flex' as const, flexDirection: 'column' as const, gap: '0.75rem',
       minWidth: 0,
+      overflowY: 'auto' as const, // allow long forms to scroll past the right preview
     },
     // Mirrors dashboard's post-edit modal preview column width (660px).
-    modalRight: { width: '660px', padding: '16px 20px', flexShrink: 0, minWidth: 0 },
+    modalRight: {
+      width: '660px',
+      padding: '16px 20px',
+      flexShrink: 0,
+      minWidth: 0,
+      overflowY: 'auto' as const,
+    },
     modalFooter: {
       display: 'flex' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const,
       padding: '12px 20px', borderTop: '1px solid rgba(255,255,255,0.08)',
       flexWrap: 'wrap' as const, gap: '0.5rem',
+      flexShrink: 0, // stay visible at the bottom regardless of body scroll
     },
     closeBtn: {
       width: '32px', height: '32px',
