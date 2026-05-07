@@ -11,6 +11,7 @@ import { getPostizIntegrations, postizDeletePost, postizListPosts } from '../dri
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
+import { ensureThumb, thumbPath, thumbStat } from '../lib/thumbnails';
 import type {
   ApiError,
   PaginatedResponse,
@@ -1032,6 +1033,17 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const filePath = join(dir, storedFilename);
       writeFileSync(filePath, buf);
 
+      // Generate a 400px thumbnail for image uploads. Don't fail the upload
+      // if thumbnail generation errors — the lazy fallback in GET /media/:id/thumb
+      // will retry on first request.
+      if (detectedMime.startsWith('image/')) {
+        try {
+          await ensureThumb(teamId, id, storedFilename);
+        } catch (err: any) {
+          console.warn(`[media] thumb generation failed for ${id}: ${err?.message || err}`);
+        }
+      }
+
       const { db } = initializeDatabase(teamId);
       const now = new Date().toISOString();
       const userId = getUserId(req);
@@ -1170,6 +1182,47 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to get media');
+    }
+  }
+
+  // GET /media/:id/thumb — ensure thumb exists, return as base64 data URL
+  // (the dashboard prefers to stream the thumb file directly from disk; this
+  // route exists so the dashboard can trigger generation if the thumb is
+  // missing, without reaching into the plugin's filesystem layout)
+  const mediaThumbMatch = req.path.match(/^\/media\/([a-f0-9-]+)\/thumb$/);
+  if (mediaThumbMatch && req.method === 'GET') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [item] = await db
+        .select()
+        .from(schema.media)
+        .where(and(eq(schema.media.id, mediaThumbMatch[1]), eq(schema.media.teamId, teamId)));
+      if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
+      if (!item.mimeType.startsWith('image/')) {
+        return apiError(400, 'NOT_IMAGE', 'Thumbnails are only available for image media');
+      }
+
+      let thumbFile: string;
+      try {
+        thumbFile = await ensureThumb(teamId, item.id, item.filename);
+      } catch (err: any) {
+        return apiError(500, 'THUMB_ERROR', err?.message || 'Failed to generate thumbnail');
+      }
+
+      const raw = readFileSync(thumbFile);
+      const stat = thumbStat(teamId, item.id);
+      return {
+        status: 200,
+        data: {
+          dataUrl: `data:image/jpeg;base64,${raw.toString('base64')}`,
+          mimeType: 'image/jpeg',
+          filename: `${item.id}.jpg`,
+          size: stat?.size ?? raw.length,
+          mtimeMs: stat?.mtimeMs ?? null,
+        },
+      };
+    } catch (error: any) {
+      return apiError(500, 'THUMB_ERROR', error?.message || 'Failed to serve thumbnail');
     }
   }
 
