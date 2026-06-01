@@ -8,6 +8,7 @@ import { initializeDatabase, encryptCredentials, decryptCredentials } from '../d
 import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import { getPostizIntegrations, postizDeletePost, postizListPosts } from '../drivers/postiz-backend';
+import { shouldCascadeToPostiz } from './postiz-cascade-policy';
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
@@ -812,8 +813,27 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
             ))
             .all();
 
-          const cascadeWorthwhile = existingPublishes.length > 0 || accountTagsChanged || platformsChanged;
-          if (cascadeWorthwhile) {
+          // Decide whether this edit may touch the third-party publisher.
+          // Already-published posts are NEVER re-published or deleted (their
+          // content is live) — this stops background cleanups and late edits
+          // from duplicating/clobbering delivered posts. Not-yet-published
+          // (draft/scheduled) posts still cascade so corrections propagate.
+          const cascadeDecision = shouldCascadeToPostiz({
+            currentStatus: post.status,
+            hasExistingPublishes: existingPublishes.length > 0,
+            accountTagsChanged,
+            platformsChanged,
+          });
+          if (!cascadeDecision.cascade && cascadeDecision.reason === 'already-published') {
+            postizCascade.push({
+              platform: '',
+              integrationId: '',
+              action: 'skip-cascade',
+              success: true,
+              error: 'Post already published; third-party post left untouched',
+            });
+          }
+          if (cascadeDecision.cascade) {
             const sources = await getBackendSources(req, teamId);
             if (!sources.postiz) {
               postizCascade.push({ platform: '', integrationId: '', action: 'skip', success: false, error: 'Postiz not configured' });
