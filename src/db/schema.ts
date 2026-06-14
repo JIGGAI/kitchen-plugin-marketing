@@ -37,6 +37,16 @@ export const media = sqliteTable('media', {
   createdBy: text('created_by').notNull(),
 });
 
+// Base-photo usage ledger — one row each time a human-tagged photo is handed
+// out as an image-edit base. "Usage count" per media_id = number of rows.
+export const basePhotoUsage = sqliteTable('base_photo_usage', {
+  id: text('id').primaryKey(),
+  teamId: text('team_id').notNull(),
+  mediaId: text('media_id').notNull(),
+  usedAt: text('used_at').notNull(),
+  runContext: text('run_context'),
+});
+
 // Templates table
 export const templates = sqliteTable('templates', {
   id: text('id').primaryKey(),
