@@ -9,6 +9,7 @@ import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import { getPostizIntegrations, postizDeletePost, postizListPosts } from '../drivers/postiz-backend';
 import { shouldCascadeToPostiz } from './postiz-cascade-policy';
+import { selectNextBasePhotos, getRotationStatus } from './base-photo-rotation';
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
@@ -1165,6 +1166,42 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to list media');
+    }
+  }
+
+  // POST /media/base-rotation/next — deterministic next base photos + record usage
+  if (req.path === '/media/base-rotation/next' && req.method === 'POST') {
+    try {
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as {
+        count?: number; tags?: string[]; exclude?: string[]; runContext?: string;
+      };
+      const count = Number(body.count);
+      if (!Number.isFinite(count) || count <= 0) {
+        return apiError(400, 'INVALID_COUNT', 'count must be a positive number');
+      }
+      const { sqlite } = initializeDatabase(teamId);
+      const result = selectNextBasePhotos(sqlite, {
+        teamId,
+        count,
+        tags: Array.isArray(body.tags) ? body.tags : ['human'],
+        exclude: Array.isArray(body.exclude) ? body.exclude : ['ai-generated'],
+        runContext: body.runContext ?? 'weekly',
+      });
+      return { status: 200, data: result };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to select base photos');
+    }
+  }
+
+  // GET /media/base-rotation/status — pool / cycle visibility
+  if (req.path === '/media/base-rotation/status' && req.method === 'GET') {
+    try {
+      const tags = req.query.tags ? req.query.tags.split(',') : ['human'];
+      const exclude = req.query.exclude ? req.query.exclude.split(',') : ['ai-generated'];
+      const { sqlite } = initializeDatabase(teamId);
+      return { status: 200, data: getRotationStatus(sqlite, { teamId, tags, exclude }) };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to read rotation status');
     }
   }
 
