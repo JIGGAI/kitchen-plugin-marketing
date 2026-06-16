@@ -1173,7 +1173,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
   if (req.path === '/media/base-rotation/next' && req.method === 'POST') {
     try {
       const body = (req.body && typeof req.body === 'object' ? req.body : {}) as {
-        count?: number; tags?: string[]; exclude?: string[]; runContext?: string;
+        count?: number; tags?: string[]; exclude?: string[]; runContext?: string; matchText?: string;
       };
       const count = Number(body.count);
       if (!Number.isFinite(count) || count <= 0) {
@@ -1186,6 +1186,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         tags: Array.isArray(body.tags) ? body.tags : ['human'],
         exclude: Array.isArray(body.exclude) ? body.exclude : ['ai-generated'],
         runContext: body.runContext ?? 'weekly',
+        matchText: typeof body.matchText === 'string' ? body.matchText : undefined,
       });
       return { status: 200, data: result };
     } catch (error: any) {
