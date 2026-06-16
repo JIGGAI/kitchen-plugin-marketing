@@ -240,6 +240,26 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     const sources = await getBackendSources(req, teamId);
     const results: Array<{ platform: string; success: boolean; postId?: string; error?: string; backend?: string; integrationId?: string }> = [];
 
+    // Layer 2 — never send an over-cap image to Postiz. Swap our own oversized
+    // media for a cached web derivative; non-our-media urls pass through.
+    const { db: pubResolveDb } = initializeDatabase(teamId);
+    let safeMediaUrls: string[] = body.mediaUrls || [];
+    try {
+      safeMediaUrls = await Promise.all((body.mediaUrls || []).map(async (u) => {
+        const m = String(u).match(/\/media\/([a-f0-9-]+)\/file/);
+        if (!m) return u;
+        const [row] = pubResolveDb.select().from(schema.media)
+          .where(and(eq(schema.media.id, m[1]), eq(schema.media.teamId, teamId))).all();
+        if (!row?.url) return u;
+        return webSafeMediaUrl(teamId, { id: row.id, filename: row.filename, url: row.url });
+      }));
+    } catch (e: any) {
+      if (e instanceof MediaTooLargeError) {
+        return { status: 207, data: { results: body.platforms.map((p) => ({ platform: p, success: false, error: e.message, backend: 'postiz' })) } };
+      }
+      throw e;
+    }
+
     for (const platform of body.platforms) {
       // If caller pinned an integrationId, create a driver that targets it directly
       let driverConfig: import('../drivers').DriverConfig = {
@@ -268,7 +288,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
 
       const postContent: PostContent = {
         text: body.content,
-        mediaUrls: body.mediaUrls,
+        mediaUrls: safeMediaUrls,
         scheduledAt: body.scheduledAt,
         settings: body.settings?.[platform],
       };
@@ -860,7 +880,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                 eq(schema.postPlatformPublishes.teamId, teamId),
               ));
 
-              // Step 3: resolve media URLs from current mediaIds
+              // Step 3: resolve media URLs from current mediaIds, swapping any
+              // over-cap original for a cached web derivative (Layer 2 backstop).
               const currentMediaIds: string[] = JSON.parse(updates.mediaIds as string || post.mediaIds || '[]');
               const resolvedMediaUrls: string[] = [];
               for (const mid of currentMediaIds) {
@@ -869,7 +890,16 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                   .from(schema.media)
                   .where(and(eq(schema.media.id, mid), eq(schema.media.teamId, teamId)))
                   .all();
-                if (m?.url) resolvedMediaUrls.push(m.url);
+                if (!m?.url) continue;
+                try {
+                  resolvedMediaUrls.push(await webSafeMediaUrl(teamId, { id: m.id, filename: m.filename, url: m.url }));
+                } catch (e: any) {
+                  if (e instanceof MediaTooLargeError) {
+                    postizCascade.push({ platform: '', integrationId: '', action: 'publish', success: false, error: e.message });
+                  } else {
+                    throw e;
+                  }
+                }
               }
 
               // Step 4: build the NEW (platform, integrationId) pair set to
