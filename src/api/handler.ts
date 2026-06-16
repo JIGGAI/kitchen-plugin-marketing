@@ -1,6 +1,6 @@
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, renameSync } from 'fs';
 import { join, extname } from 'path';
 import { homedir } from 'os';
 import type { KitchenPluginContext } from './types-kitchen';
@@ -14,6 +14,7 @@ import { startGenerationJob, startPromptGenerationJob, getJob } from '../generat
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
 import { ensureThumb, thumbPath, thumbStat } from '../lib/thumbnails';
+import { needsCompression, compressUnderCap, webSafeMediaUrl, webDerivativePath, MediaTooLargeError, POSTIZ_MAX_BYTES } from '../lib/image-fit';
 import type {
   ApiError,
   PaginatedResponse,
@@ -1049,10 +1050,35 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       }
       const id = randomUUID();
       const ext = extname(originalName || '') || mimeToExt(detectedMime);
-      const storedFilename = `${id}${ext}`;
+      let storedFilename = `${id}${ext}`;
       const dir = ensureMediaDir(teamId);
       const filePath = join(dir, storedFilename);
       writeFileSync(filePath, buf);
+
+      // Layer 1 — keep oversized images under Postiz's 10MB cap. Convert to a
+      // compressed JPEG in place; if it can't get under the cap, keep the
+      // original and let the publish-time backstop handle it.
+      if (detectedMime.startsWith('image/') && needsCompression(buf.length)) {
+        const fitTmp = join(dir, `${id}.fit.jpg`);
+        try {
+          const res = await compressUnderCap(filePath, fitTmp);
+          if (res.bytes <= POSTIZ_MAX_BYTES && res.bytes < buf.length) {
+            const jpgName = `${id}.jpg`;
+            const jpgPath = join(dir, jpgName);
+            if (existsSync(filePath) && filePath !== jpgPath) unlinkSync(filePath);
+            renameSync(fitTmp, jpgPath);
+            storedFilename = jpgName;
+            detectedMime = 'image/jpeg';
+            buf = readFileSync(jpgPath); // record.size below reflects the normalized file
+          } else {
+            if (existsSync(fitTmp)) unlinkSync(fitTmp);
+            console.warn(`[media] could not normalize ${id} under 10MB (got ${res.bytes} bytes)`);
+          }
+        } catch (err: any) {
+          if (existsSync(fitTmp)) unlinkSync(fitTmp);
+          console.warn(`[media] image normalization failed for ${id}: ${err?.message || err}`);
+        }
+      }
 
       // Generate a 400px thumbnail for image uploads. Don't fail the upload
       // if thumbnail generation errors — the lazy fallback in GET /media/:id/thumb
