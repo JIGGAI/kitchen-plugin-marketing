@@ -1321,12 +1321,17 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .where(and(eq(schema.media.id, mediaFileMatch[1]), eq(schema.media.teamId, teamId)));
       if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
 
-      const fp = join(MEDIA_DIR, teamId, item.filename);
+      let fp = join(MEDIA_DIR, teamId, item.filename);
+      let serveMime = item.mimeType;
+      if (req.query.variant === 'web') {
+        const wp = webDerivativePath(teamId, item.id);
+        if (existsSync(wp)) { fp = wp; serveMime = 'image/jpeg'; }
+      }
       if (!existsSync(fp)) return apiError(404, 'NOT_FOUND', 'File missing from disk');
 
       const raw = readFileSync(fp);
-      const dataUrl = `data:${item.mimeType};base64,${raw.toString('base64')}`;
-      return { status: 200, data: { dataUrl, mimeType: item.mimeType, filename: item.originalName } };
+      const dataUrl = `data:${serveMime};base64,${raw.toString('base64')}`;
+      return { status: 200, data: { dataUrl, mimeType: serveMime, filename: item.originalName } };
     } catch (error: any) {
       return apiError(500, 'FILE_ERROR', error?.message || 'Failed to serve file');
     }
