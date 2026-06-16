@@ -30,6 +30,8 @@ export type SelectOptions = {
   runContext?: string | null;
   now?: string;           // ISO timestamp (injectable for tests)
   uuid?: () => string;    // id generator (injectable for tests)
+  matchText?: string;     // when set, rank the freshest tier by topical match
+  random?: () => number;  // tiebreak source (injectable for tests; default Math.random)
 };
 
 // Build the tag WHERE fragment. Tags are stored as a JSON array text, e.g.
@@ -45,6 +47,27 @@ function tagWhere(tags: string[], exclude: string[]): { clause: string; params: 
 
 const USAGE_COUNT_SUBQUERY =
   `(SELECT COUNT(*) FROM base_photo_usage u WHERE u.media_id = m.id AND u.team_id = m.team_id)`;
+
+// Topical match between an image prompt and a photo's tags. Mirrors the scoring
+// the dashboard generator used before selection was consolidated here.
+function tokenizeForMatch(text: string): Set<string> {
+  return new Set(
+    String(text).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3),
+  );
+}
+
+function scoreCandidate(promptTokens: Set<string>, tags: string[]): number {
+  let score = 0;
+  for (const tag of tags || []) {
+    const tagStr = String(tag).toLowerCase();
+    if (tagStr === 'human') continue; // universal — not informative
+    if (promptTokens.has(tagStr)) score += 2; // full-tag match weighted higher
+    for (const piece of tagStr.split('-')) {
+      if (piece.length >= 3 && promptTokens.has(piece)) score += 1;
+    }
+  }
+  return score;
+}
 
 export function selectNextBasePhotos(sqlite: Sqlite, options: SelectOptions): SelectResult {
   const tags = options.tags ?? ['human'];
@@ -65,16 +88,42 @@ export function selectNextBasePhotos(sqlite: Sqlite, options: SelectOptions): Se
 
   if (count === 0 || poolSize === 0) return { photos: [], poolSize, cycle };
 
-  const rows = sqlite
-    .prepare(
-      `SELECT m.id, m.filename, m.original_name AS originalName, m.tags, m.url,
-              ${USAGE_COUNT_SUBQUERY} AS usageCountBefore
-       FROM media m
-       WHERE m.team_id = ?${clause}
-       ORDER BY usageCountBefore ASC, random()
-       LIMIT ?`,
-    )
-    .all(options.teamId, ...params, count) as Array<any>;
+  let rows: Array<any>;
+  if (options.matchText && options.matchText.trim()) {
+    // Topical path: pull every candidate with its usage count, then in JS sort
+    // by freshness (tier) → topical score → random tiebreak, and take `count`.
+    // Pool is small (≤ a few hundred), so the full scan is cheap.
+    const rnd = options.random ?? Math.random;
+    const tokens = tokenizeForMatch(options.matchText);
+    const all = sqlite
+      .prepare(
+        `SELECT m.id, m.filename, m.original_name AS originalName, m.tags, m.url,
+                ${USAGE_COUNT_SUBQUERY} AS usageCountBefore
+         FROM media m
+         WHERE m.team_id = ?${clause}`,
+      )
+      .all(options.teamId, ...params) as Array<any>;
+    rows = all
+      .map((r) => ({ r, score: scoreCandidate(tokens, JSON.parse(r.tags || '[]')), jitter: rnd() }))
+      .sort((a, b) => {
+        if (a.r.usageCountBefore !== b.r.usageCountBefore) return a.r.usageCountBefore - b.r.usageCountBefore;
+        if (b.score !== a.score) return b.score - a.score;
+        return a.jitter - b.jitter;
+      })
+      .slice(0, count)
+      .map((x) => x.r);
+  } else {
+    rows = sqlite
+      .prepare(
+        `SELECT m.id, m.filename, m.original_name AS originalName, m.tags, m.url,
+                ${USAGE_COUNT_SUBQUERY} AS usageCountBefore
+         FROM media m
+         WHERE m.team_id = ?${clause}
+         ORDER BY usageCountBefore ASC, random()
+         LIMIT ?`,
+      )
+      .all(options.teamId, ...params, count) as Array<any>;
+  }
 
   const insert = sqlite.prepare(
     `INSERT INTO base_photo_usage (id, team_id, media_id, used_at, run_context) VALUES (?, ?, ?, ?, ?)`,

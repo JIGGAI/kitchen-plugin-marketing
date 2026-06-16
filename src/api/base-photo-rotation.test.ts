@@ -90,6 +90,60 @@ describe('selectNextBasePhotos', () => {
     expect(res.photos).toEqual([]);
     expect(res.poolSize).toBe(0);
   });
+
+  it('matchText picks the best topical match within the freshest tier', () => {
+    // All never-used (same tier) so only topical score may decide. Without the
+    // feature the tier is ordered by SQL random(), so the match is not reliably
+    // returned — looping makes this a deterministic RED until topical ranking
+    // lands. Each iteration uses a fresh DB so usage history can't interfere.
+    for (let i = 0; i < 12; i++) {
+      counter = 0;
+      sqlite = makeDb();
+      seedMedia(sqlite, [
+        { id: 'a', tags: ['human', 'broom', 'cleaning'] },
+        { id: 'b', tags: ['human', 'beard-trim', 'client'] },
+        { id: 'c', tags: ['human', 'storefront'] },
+      ]);
+      const res = selectNextBasePhotos(sqlite, opts({ count: 1, matchText: 'man receiving a beard trim from his barber' }));
+      expect(res.photos.map((p) => p.id)).toEqual(['b']);
+    }
+  });
+
+  it('freshness beats topical score (a used high-match loses to a fresh low-match)', () => {
+    seedMedia(sqlite, [
+      { id: 'match', tags: ['human', 'beard-trim'] },
+      { id: 'fresh', tags: ['human', 'storefront'] },
+    ]);
+    // Burn the topical match once so it leaves the freshest tier.
+    sqlite.prepare(`INSERT INTO base_photo_usage (id, team_id, media_id, used_at) VALUES ('s','T','match','2026-01-01')`).run();
+    const res = selectNextBasePhotos(sqlite, opts({ count: 1, matchText: 'beard trim' }));
+    expect(res.photos.map((p) => p.id)).toEqual(['fresh']);
+  });
+
+  it('all-zero topical scores fall back to deterministic random within the tier', () => {
+    seedMedia(sqlite, [
+      { id: 'a', tags: ['human', 'storefront'] },
+      { id: 'b', tags: ['human', 'interior'] },
+    ]); // neither matches the prompt
+    // random() always returns 0 → the first row after a stable sort wins deterministically.
+    const res = selectNextBasePhotos(sqlite, opts({ count: 1, matchText: 'beard trim haircut', random: () => 0 }));
+    expect(res.photos.length).toBe(1);
+    expect(['a', 'b']).toContain(res.photos[0].id);
+  });
+
+  it('sequential count:1 calls never repeat a base until the pool is used once', () => {
+    seedMedia(sqlite, [
+      { id: 'a', tags: ['human', 'beard-trim'] },
+      { id: 'b', tags: ['human', 'beard-trim'] },
+      { id: 'c', tags: ['human', 'beard-trim'] },
+    ]); // identical tags → all tie on score, freshness + uniqueness must carry it
+    const picked = [];
+    for (let i = 0; i < 3; i++) {
+      const r = selectNextBasePhotos(sqlite, opts({ count: 1, matchText: 'beard trim' }));
+      picked.push(r.photos[0].id);
+    }
+    expect(new Set(picked).size).toBe(3); // 3 distinct across 3 calls
+  });
 });
 
 describe('getRotationStatus', () => {
