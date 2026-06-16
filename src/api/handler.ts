@@ -1,6 +1,6 @@
 import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, renameSync } from 'fs';
 import { join, extname } from 'path';
 import { homedir } from 'os';
 import type { KitchenPluginContext } from './types-kitchen';
@@ -14,6 +14,7 @@ import { startGenerationJob, startPromptGenerationJob, getJob } from '../generat
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
 import { ensureThumb, thumbPath, thumbStat } from '../lib/thumbnails';
+import { needsCompression, compressUnderCap, webSafeMediaUrl, webDerivativePath, MediaTooLargeError, POSTIZ_MAX_BYTES } from '../lib/image-fit';
 import type {
   ApiError,
   PaginatedResponse,
@@ -239,6 +240,26 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     const sources = await getBackendSources(req, teamId);
     const results: Array<{ platform: string; success: boolean; postId?: string; error?: string; backend?: string; integrationId?: string }> = [];
 
+    // Layer 2 — never send an over-cap image to Postiz. Swap our own oversized
+    // media for a cached web derivative; non-our-media urls pass through.
+    const { db: pubResolveDb } = initializeDatabase(teamId);
+    let safeMediaUrls: string[] = body.mediaUrls || [];
+    try {
+      safeMediaUrls = await Promise.all((body.mediaUrls || []).map(async (u) => {
+        const m = String(u).match(/\/media\/([a-f0-9-]+)\/file/);
+        if (!m) return u;
+        const [row] = pubResolveDb.select().from(schema.media)
+          .where(and(eq(schema.media.id, m[1]), eq(schema.media.teamId, teamId))).all();
+        if (!row?.url) return u;
+        return webSafeMediaUrl(teamId, { id: row.id, filename: row.filename, url: row.url });
+      }));
+    } catch (e: any) {
+      if (e instanceof MediaTooLargeError) {
+        return { status: 207, data: { results: body.platforms.map((p) => ({ platform: p, success: false, error: e.message, backend: 'postiz' })) } };
+      }
+      throw e;
+    }
+
     for (const platform of body.platforms) {
       // If caller pinned an integrationId, create a driver that targets it directly
       let driverConfig: import('../drivers').DriverConfig = {
@@ -267,7 +288,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
 
       const postContent: PostContent = {
         text: body.content,
-        mediaUrls: body.mediaUrls,
+        mediaUrls: safeMediaUrls,
         scheduledAt: body.scheduledAt,
         settings: body.settings?.[platform],
       };
@@ -859,7 +880,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                 eq(schema.postPlatformPublishes.teamId, teamId),
               ));
 
-              // Step 3: resolve media URLs from current mediaIds
+              // Step 3: resolve media URLs from current mediaIds, swapping any
+              // over-cap original for a cached web derivative (Layer 2 backstop).
               const currentMediaIds: string[] = JSON.parse(updates.mediaIds as string || post.mediaIds || '[]');
               const resolvedMediaUrls: string[] = [];
               for (const mid of currentMediaIds) {
@@ -868,7 +890,16 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
                   .from(schema.media)
                   .where(and(eq(schema.media.id, mid), eq(schema.media.teamId, teamId)))
                   .all();
-                if (m?.url) resolvedMediaUrls.push(m.url);
+                if (!m?.url) continue;
+                try {
+                  resolvedMediaUrls.push(await webSafeMediaUrl(teamId, { id: m.id, filename: m.filename, url: m.url }));
+                } catch (e: any) {
+                  if (e instanceof MediaTooLargeError) {
+                    postizCascade.push({ platform: '', integrationId: '', action: 'publish', success: false, error: e.message });
+                  } else {
+                    throw e;
+                  }
+                }
               }
 
               // Step 4: build the NEW (platform, integrationId) pair set to
@@ -1049,10 +1080,35 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       }
       const id = randomUUID();
       const ext = extname(originalName || '') || mimeToExt(detectedMime);
-      const storedFilename = `${id}${ext}`;
+      let storedFilename = `${id}${ext}`;
       const dir = ensureMediaDir(teamId);
       const filePath = join(dir, storedFilename);
       writeFileSync(filePath, buf);
+
+      // Layer 1 — keep oversized images under Postiz's 10MB cap. Convert to a
+      // compressed JPEG in place; if it can't get under the cap, keep the
+      // original and let the publish-time backstop handle it.
+      if (detectedMime.startsWith('image/') && needsCompression(buf.length)) {
+        const fitTmp = join(dir, `${id}.fit.jpg`);
+        try {
+          const res = await compressUnderCap(filePath, fitTmp);
+          if (res.bytes <= POSTIZ_MAX_BYTES && res.bytes < buf.length) {
+            const jpgName = `${id}.jpg`;
+            const jpgPath = join(dir, jpgName);
+            if (existsSync(filePath) && filePath !== jpgPath) unlinkSync(filePath);
+            renameSync(fitTmp, jpgPath);
+            storedFilename = jpgName;
+            detectedMime = 'image/jpeg';
+            buf = readFileSync(jpgPath); // record.size below reflects the normalized file
+          } else {
+            if (existsSync(fitTmp)) unlinkSync(fitTmp);
+            console.warn(`[media] could not normalize ${id} under 10MB (got ${res.bytes} bytes)`);
+          }
+        } catch (err: any) {
+          if (existsSync(fitTmp)) unlinkSync(fitTmp);
+          console.warn(`[media] image normalization failed for ${id}: ${err?.message || err}`);
+        }
+      }
 
       // Generate a 400px thumbnail for image uploads. Don't fail the upload
       // if thumbnail generation errors — the lazy fallback in GET /media/:id/thumb
@@ -1295,12 +1351,17 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .where(and(eq(schema.media.id, mediaFileMatch[1]), eq(schema.media.teamId, teamId)));
       if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
 
-      const fp = join(MEDIA_DIR, teamId, item.filename);
+      let fp = join(MEDIA_DIR, teamId, item.filename);
+      let serveMime = item.mimeType;
+      if (req.query.variant === 'web') {
+        const wp = webDerivativePath(teamId, item.id);
+        if (existsSync(wp)) { fp = wp; serveMime = 'image/jpeg'; }
+      }
       if (!existsSync(fp)) return apiError(404, 'NOT_FOUND', 'File missing from disk');
 
       const raw = readFileSync(fp);
-      const dataUrl = `data:${item.mimeType};base64,${raw.toString('base64')}`;
-      return { status: 200, data: { dataUrl, mimeType: item.mimeType, filename: item.originalName } };
+      const dataUrl = `data:${serveMime};base64,${raw.toString('base64')}`;
+      return { status: 200, data: { dataUrl, mimeType: serveMime, filename: item.originalName } };
     } catch (error: any) {
       return apiError(500, 'FILE_ERROR', error?.message || 'Failed to serve file');
     }
