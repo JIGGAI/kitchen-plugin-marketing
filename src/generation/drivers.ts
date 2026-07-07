@@ -64,6 +64,22 @@ function spawnScript(
   });
 }
 
+export function normalizeGenerationError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (
+    message.includes('"code":1102')
+    || /Account balance not enough/i.test(message)
+    || /balance not enough/i.test(message)
+  ) {
+    const requestId = message.match(/"request_id"\s*:\s*"([^"]+)"/)?.[1];
+    const suffix = requestId ? ` Kling request id: ${requestId}.` : '';
+    return new Error(`Kling AI account balance is too low to create this video. Add Kling credits or switch to a non-Kling video provider, then try again.${suffix}`);
+  }
+
+  return error instanceof Error ? error : new Error(message);
+}
+
 export async function generateImage(
   sourcePath: string,
   prompt: string,
@@ -184,23 +200,28 @@ export async function generateVideo(
   const duration = String(config?.duration ?? 5);
   const aspectRatio = String(config?.aspectRatio ?? '16:9');
 
-  const { stdout } = await spawnScript('node', scriptPath, [
-    '--prompt', prompt,
-    '--image', sourcePath,
-    '--output_dir', outputDir,
-    '--duration', duration,
-    '--aspect_ratio', aspectRatio,
-    '--mode', 'pro',
-  ], {
-    cwd: outputDir,
-    env: {
-      ...configEnv,
-      HOME: homedir(),
-      KLING_ALLOW_ABSOLUTE_PATHS: '1',
-      KLING_MEDIA_ROOTS: [dirname(sourcePath), outputDir].join(','),
-    },
-    timeoutMs: 300_000,
-  });
+  let stdout = '';
+  try {
+    ({ stdout } = await spawnScript('node', scriptPath, [
+      '--prompt', prompt,
+      '--image', sourcePath,
+      '--output_dir', outputDir,
+      '--duration', duration,
+      '--aspect_ratio', aspectRatio,
+      '--mode', 'pro',
+    ], {
+      cwd: outputDir,
+      env: {
+        ...configEnv,
+        HOME: homedir(),
+        KLING_ALLOW_ABSOLUTE_PATHS: '1',
+        KLING_MEDIA_ROOTS: [dirname(sourcePath), outputDir].join(','),
+      },
+      timeoutMs: 300_000,
+    }));
+  } catch (error) {
+    throw normalizeGenerationError(error);
+  }
 
   const doneMatch = stdout.match(/(?:Done|Saved|完成|已保存):\s*(.+\.mp4)/m);
   let videoPath = doneMatch ? doneMatch[1].trim() : '';
