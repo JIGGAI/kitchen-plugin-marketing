@@ -239,6 +239,75 @@ export async function generateVideo(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Text-to-video generation (no source image required)               */
+/* ------------------------------------------------------------------ */
+
+export async function generateVideoFromPrompt(
+  prompt: string,
+  outputDir: string,
+  config?: Record<string, unknown>,
+): Promise<DriverResult> {
+  const skillDir = findSkillDir('klingai');
+  if (!skillDir) {
+    throw new Error('klingai skill is not installed. Install via: clawhub install klingai --force');
+  }
+
+  const scriptPath = join(skillDir, 'scripts', 'video.mjs');
+  if (!existsSync(scriptPath)) {
+    throw new Error(`klingai video script not found at ${scriptPath}`);
+  }
+
+  const credPath = join(homedir(), '.config', 'kling', '.credentials');
+  if (!existsSync(credPath)) {
+    throw new Error(
+      'Kling AI credentials not configured. '
+      + 'Create ~/.config/kling/.credentials with access_key_id and secret_access_key',
+    );
+  }
+
+  mkdirSync(outputDir, { recursive: true });
+  const configEnv = loadConfigEnv();
+  const duration = String(config?.duration ?? 5);
+  const aspectRatio = String(config?.aspectRatio ?? '16:9');
+
+  let stdout = '';
+  try {
+    ({ stdout } = await spawnScript('node', scriptPath, [
+      '--prompt', prompt,
+      '--output_dir', outputDir,
+      '--duration', duration,
+      '--aspect_ratio', aspectRatio,
+      '--mode', 'pro',
+    ], {
+      cwd: outputDir,
+      env: {
+        ...configEnv,
+        HOME: homedir(),
+        KLING_ALLOW_ABSOLUTE_PATHS: '1',
+        KLING_MEDIA_ROOTS: outputDir,
+      },
+      timeoutMs: 300_000,
+    }));
+  } catch (error) {
+    throw normalizeGenerationError(error);
+  }
+
+  const doneMatch = stdout.match(/(?:Done|Saved|完成|已保存):\s*(.+\.mp4)/m);
+  let videoPath = doneMatch ? doneMatch[1].trim() : '';
+
+  if (!videoPath || !existsSync(videoPath)) {
+    const files = readdirSync(outputDir).filter(f => f.endsWith('.mp4')).sort().reverse();
+    if (files.length) videoPath = join(outputDir, files[0]);
+  }
+
+  if (!videoPath || !existsSync(videoPath)) {
+    throw new Error(`No generated video found. Script output: ${stdout.slice(0, 500)}`);
+  }
+
+  return { filePath: videoPath, metadata: { skill: 'klingai', mode: 'text-to-video', prompt } };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Text-to-image generation (no source image required)               */
 /* ------------------------------------------------------------------ */
 

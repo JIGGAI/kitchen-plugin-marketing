@@ -1576,17 +1576,18 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
-  // ---- POST /media/generate (prompt-only text-to-image, no source required) ----
+  // ---- POST /media/generate (prompt-only text-to-image or text-to-video) ----
   if (req.path === '/media/generate' && req.method === 'POST') {
     try {
       const body = req.body as (GenerationRequest & { filename?: string }) | undefined;
       if (!body?.prompt) {
         return apiError(400, 'VALIDATION_ERROR', 'prompt is required');
       }
+      const type: 'image' | 'video' = body.type === 'video' ? 'video' : 'image';
       const userId = getUserId(req);
       const job = startPromptGenerationJob(teamId, {
         prompt: body.prompt,
-        type: 'image',
+        type,
         provider: body.provider,
         config: body.config,
         filename: body.filename,
