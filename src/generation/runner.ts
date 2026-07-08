@@ -277,6 +277,7 @@ async function runPromptGeneration(
         'ai-generated',
         'text-to-video',
         `source:${request.provider || 'klingai'}`,
+        'pending-save',
       ]);
     } else {
       const quality = getCompressionQuality(teamId);
@@ -292,6 +293,7 @@ async function runPromptGeneration(
         'ai-generated',
         'text-to-image',
         `source:${request.provider || 'gemini'}`,
+        'pending-save',
       ]);
     }
 
@@ -438,6 +440,7 @@ async function runGeneration(
       'ai-generated',
       request.type === 'video' ? 'video' : 'derived',
       `source:${request.provider || (request.type === 'image' ? 'gemini' : 'klingai')}`,
+      'pending-save',
       `source-media:${sourceMediaId}`,
     ]);
 

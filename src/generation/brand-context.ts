@@ -2,12 +2,9 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const BRAND_PATH = join(
-  homedir(),
-  '.openclaw',
-  'workspace-hmx-marketing-team',
-  'BRAND.md',
-);
+const WORKSPACE = join(homedir(), '.openclaw', 'workspace-hmx-marketing-team');
+const BRAND_PATH = join(WORKSPACE, 'BRAND.md');
+const BRAND_VOICE_PATH = join(WORKSPACE, 'shared-context', 'brand-voice.md');
 
 const SECTION_PREFIXES = [
   '## 2. Brand position',
@@ -17,12 +14,13 @@ const SECTION_PREFIXES = [
   '## 19. Visual cues',
 ];
 
-// Extract the sections that describe the look-and-feel of Hair Mechanix so we
-// can prepend them to generation prompts. Sections were chosen for visual /
-// aesthetic relevance — voice-only sections (§9, §10, §11) don't help image or
-// video generation prompts. Total budget is roughly 1–2k tokens.
+// Extract the sections of BRAND.md that describe the look-and-feel of Hair
+// Mechanix so we can prepend them to generation prompts. Sections were
+// chosen for visual / aesthetic relevance. Voice-only text is loaded from
+// brand-voice.md instead — it steers alt text / caption tone in downstream
+// consumers but doesn't drive the image / video itself.
 export function extractBrandVisualPreamble(source?: string): string {
-  const content = source ?? readBrandFile();
+  const content = source ?? readSafely(BRAND_PATH);
   if (!content) return '';
 
   const lines = content.split('\n');
@@ -45,21 +43,20 @@ export function extractBrandVisualPreamble(source?: string): string {
   if (capturing && currentSection) chunks.push(currentSection.trimEnd());
 
   if (chunks.length === 0) return '';
-  return [
-    '[Brand context — Hair Mechanix visual guidelines. The generated image or video should reflect these.]',
-    '',
-    chunks.join('\n\n'),
-    '',
-    '[End brand context — user prompt follows]',
-    '',
-    '',
-  ].join('\n');
+  return chunks.join('\n\n');
 }
 
-function readBrandFile(): string {
+// Read brand-voice.md in full. The file is authored to be prompt-ready
+// (short, opinionated, no boilerplate) so we ship it whole rather than
+// slicing sections out of it.
+export function readBrandVoice(): string {
+  return readSafely(BRAND_VOICE_PATH);
+}
+
+function readSafely(p: string): string {
   try {
-    if (!existsSync(BRAND_PATH)) return '';
-    return readFileSync(BRAND_PATH, 'utf8');
+    if (!existsSync(p)) return '';
+    return readFileSync(p, 'utf8').trim();
   } catch {
     return '';
   }
@@ -67,11 +64,33 @@ function readBrandFile(): string {
 
 export function applyBrandContext(prompt: string, includeBrand: boolean | undefined): string {
   if (!includeBrand) return prompt;
-  const preamble = extractBrandVisualPreamble();
-  if (!preamble) return prompt;
-  return `${preamble}${prompt}`;
+  const visualPreamble = extractBrandVisualPreamble();
+  const voice = readBrandVoice();
+  if (!visualPreamble && !voice) return prompt;
+
+  const parts: string[] = [];
+  parts.push('[Brand context — Hair Mechanix. The generated image or video should reflect these.]');
+  parts.push('');
+  if (visualPreamble) {
+    parts.push(visualPreamble);
+    parts.push('');
+  }
+  if (voice) {
+    parts.push('## Brand voice');
+    parts.push('');
+    parts.push(voice);
+    parts.push('');
+  }
+  parts.push('[End brand context — user prompt follows]');
+  parts.push('');
+  parts.push('');
+
+  return parts.join('\n') + prompt;
 }
 
 export function getBrandFilePath(): string {
   return BRAND_PATH;
+}
+export function getBrandVoiceFilePath(): string {
+  return BRAND_VOICE_PATH;
 }

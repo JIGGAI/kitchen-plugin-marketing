@@ -454,9 +454,14 @@
     }, [resetGenerateModal]);
 
     const closeGenerateModal = useCallback(() => {
+      // If the user leaves via the overlay / × while sitting on an unsaved
+      // preview, discard the pending-save row server-side.
+      if (generateStatus === 'completed' && generateResultItem?.id) {
+        void discardPending(generateResultItem.id);
+      }
       setGenerateOpen(false);
       resetGenerateModal();
-    }, [resetGenerateModal]);
+    }, [generateStatus, generateResultItem, discardPending, resetGenerateModal]);
 
     const openGenerateSeedPicker = useCallback(async () => {
       setGenerateSeedPickerOpen(true);
@@ -506,13 +511,13 @@
           if (!job) throw new Error('Job not found');
           if (job.status === 'completed' && job.generatedMediaId) {
             setGenerateStatus('completed');
-            // Refresh library first, then fetch the preview data URL.
-            await loadMedia();
-            // Look up the new item so we can render it inline.
-            const mediaRes = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=200`);
-            const mediaJson = await mediaRes.json();
-            const item = (mediaJson.data || []).find((m: any) => m.id === job.generatedMediaId);
-            setGenerateResultItem(item || { id: job.generatedMediaId });
+            // Don't refresh the library here — the new row is tagged
+            // "pending-save" and filtered from /media until the user
+            // clicks Save media. A refresh right now would show nothing
+            // and only muddle expectations.
+            const mediaRes = await fetch(`${apiBase}/media/${job.generatedMediaId}?team=${encodeURIComponent(teamId)}&includePending=1`);
+            const mediaJson = await mediaRes.json().catch(() => ({}));
+            setGenerateResultItem((mediaJson && (mediaJson.data || mediaJson)) || { id: job.generatedMediaId });
             await fetchGeneratedPreview(job.generatedMediaId);
             return;
           }
@@ -580,15 +585,62 @@
       catch { /* localStorage unavailable — fine */ }
     }, [teamId, generateIncludeBrand]);
 
+    // Best-effort delete of a pending-save item on the server. Ignores
+    // errors — the pending-save filter keeps the row out of the library
+    // anyway; a stale row won't confuse users.
+    const discardPending = useCallback(async (id: string | null | undefined) => {
+      if (!id) return;
+      try {
+        await fetch(`${apiBase}/media/${id}?team=${encodeURIComponent(teamId)}`, { method: 'DELETE' });
+      } catch { /* best-effort */ }
+    }, [apiBase, teamId]);
+
+    const [generateSaving, setGenerateSaving] = useState<'saving' | 'discarding' | null>(null);
+
     const regenerateGenerate = useCallback(() => {
       // Return to form state; keep prompt/type/seed so the user can tweak.
+      // Discard the previous pending preview so it doesn't linger.
+      const previous = generateResultItem;
       setGenerateStatus('idle');
       setGenerateStatusText('');
       setGenerateJobId(null);
       setGenerateResultItem(null);
       setGenerateResultUrl('');
       setGenerateError(null);
-    }, []);
+      if (previous?.id) void discardPending(previous.id);
+    }, [generateResultItem, discardPending]);
+
+    const saveGenerateResult = useCallback(async () => {
+      if (!generateResultItem?.id || generateSaving) return;
+      setGenerateSaving('saving');
+      try {
+        const res = await fetch(
+          `${apiBase}/media/${generateResultItem.id}/save?team=${encodeURIComponent(teamId)}`,
+          { method: 'POST' },
+        );
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(String((j as any)?.message || (j as any)?.error || `HTTP ${res.status}`));
+        }
+        await loadMedia();
+        setGenerateOpen(false);
+        setGenerateSaving(null);
+      } catch (e: any) {
+        setGenerateSaving(null);
+        setGenerateStatus('failed');
+        setGenerateError(String(e?.message || e));
+      }
+    }, [apiBase, teamId, generateResultItem, generateSaving, loadMedia]);
+
+    const discardGenerateResult = useCallback(async () => {
+      if (generateSaving) return;
+      const id = generateResultItem?.id || null;
+      setGenerateSaving('discarding');
+      await discardPending(id);
+      setGenerateSaving(null);
+      setGenerateOpen(false);
+      resetGenerateModal();
+    }, [generateResultItem, generateSaving, discardPending, resetGenerateModal]);
 
     useEffect(() => {
       return () => {
@@ -1644,11 +1696,29 @@
                   : h('img', { src: generateResultUrl, alt: 'Generated result', style: { maxWidth: '100%', maxHeight: '60vh', borderRadius: '8px', objectFit: 'contain' as const, display: 'block' } }),
             ),
             h('div', {
-              style: { color: 'rgba(134,239,172,0.9)', fontSize: '0.85rem' },
-            }, `Saved to library ✓${generateResultItem?.originalName ? `  ·  ${generateResultItem.originalName}` : ''}`),
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' } },
-              h('button', { type: 'button', onClick: regenerateGenerate, style: t.btnGhost }, 'Regenerate'),
-              h('button', { type: 'button', onClick: closeGenerateModal, style: t.btnPrimary }, 'Done'),
+              style: { color: 'rgba(251,191,36,0.9)', fontSize: '0.85rem' },
+            }, generateResultItem?.originalName
+              ? `Preview — not yet saved · ${generateResultItem.originalName}`
+              : 'Preview — click "Save media" to add to your library.'),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' as const } },
+              h('button', {
+                type: 'button',
+                onClick: () => void discardGenerateResult(),
+                disabled: !!generateSaving,
+                style: { ...t.btnGhost, opacity: generateSaving ? 0.6 : 1 },
+              }, generateSaving === 'discarding' ? 'Discarding…' : 'Discard'),
+              h('button', {
+                type: 'button',
+                onClick: regenerateGenerate,
+                disabled: !!generateSaving,
+                style: { ...t.btnGhost, opacity: generateSaving ? 0.6 : 1 },
+              }, 'Regenerate'),
+              h('button', {
+                type: 'button',
+                onClick: () => void saveGenerateResult(),
+                disabled: !!generateSaving,
+                style: { ...t.btnPrimary, opacity: generateSaving ? 0.6 : 1 },
+              }, generateSaving === 'saving' ? 'Saving…' : 'Save media'),
             ),
           ),
 

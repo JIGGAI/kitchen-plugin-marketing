@@ -1,4 +1,4 @@
-import { and, desc, eq, like, sql } from 'drizzle-orm';
+import { and, desc, eq, like, notLike, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, renameSync } from 'fs';
 import { join, extname } from 'path';
@@ -1172,6 +1172,12 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       if (req.query.mimeType) {
         conditions.push(like(schema.media.mimeType, `${req.query.mimeType}%`));
       }
+      // Hide pending-save items — those are Generate Media previews the
+      // user has NOT yet clicked "Save media" on. `?includePending=1` opts
+      // back in for admin surfaces (garbage collection, debug) if needed.
+      if (req.query.includePending !== '1') {
+        conditions.push(notLike(schema.media.tags, '%"pending-save"%'));
+      }
 
       const totalResult = await db
         .select({ count: sql<number>`count(*)` })
@@ -1492,6 +1498,33 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       return { status: 200, data: { deleted: true, id: mediaIdMatch[1] } };
     } catch (error: any) {
       return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to delete media');
+    }
+  }
+
+  // ---- POST /media/:id/save (commit a Generate Media preview into the
+  // library by dropping its "pending-save" tag). Silently succeeds when
+  // the item is not pending-save so a double-click is safe.
+  const mediaSaveMatch = req.path.match(/^\/media\/([a-f0-9-]+)\/save$/);
+  if (mediaSaveMatch && req.method === 'POST') {
+    try {
+      const { db } = initializeDatabase(teamId);
+      const [item] = await db
+        .select()
+        .from(schema.media)
+        .where(and(eq(schema.media.id, mediaSaveMatch[1]), eq(schema.media.teamId, teamId)));
+      if (!item) return apiError(404, 'NOT_FOUND', 'Media not found');
+      let tags: string[] = [];
+      try { tags = JSON.parse(item.tags || '[]'); } catch { tags = []; }
+      const nextTags = tags.filter((t) => t !== 'pending-save');
+      if (nextTags.length !== tags.length) {
+        await db
+          .update(schema.media)
+          .set({ tags: JSON.stringify(nextTags) })
+          .where(and(eq(schema.media.id, mediaSaveMatch[1]), eq(schema.media.teamId, teamId)));
+      }
+      return { status: 200, data: { saved: true, id: mediaSaveMatch[1], tags: nextTags } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to save media');
     }
   }
 
