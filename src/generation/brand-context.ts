@@ -6,86 +6,101 @@ const WORKSPACE = join(homedir(), '.openclaw', 'workspace-hmx-marketing-team');
 const BRAND_PATH = join(WORKSPACE, 'BRAND.md');
 const BRAND_VOICE_PATH = join(WORKSPACE, 'shared-context', 'brand-voice.md');
 
-const SECTION_PREFIXES = [
-  '## 2. Brand position',
-  '## 6. Brand archetype',
-  '## 7. Brand personality',
-  '## 17. Imagery rules',
-  '## 19. Visual cues',
-];
+// Kling video API caps the prompt at 2500 chars (HTTP 400 code 1201). Gemini
+// image generation doesn't have a documented hard cap but starts returning
+// empty candidates when the prompt is dense with unrelated context. We aim
+// well under both.
+const BRAND_SUFFIX_MAX_CHARS = 1400;
 
-// Extract the sections of BRAND.md that describe the look-and-feel of Hair
-// Mechanix so we can prepend them to generation prompts. Sections were
-// chosen for visual / aesthetic relevance. Voice-only text is loaded from
-// brand-voice.md instead — it steers alt text / caption tone in downstream
-// consumers but doesn't drive the image / video itself.
-export function extractBrandVisualPreamble(source?: string): string {
-  const content = source ?? readSafely(BRAND_PATH);
-  if (!content) return '';
-
-  const lines = content.split('\n');
-  const chunks: string[] = [];
-  let currentSection = '';
+// Extract a specific H2 or H3 subsection (from `## Name` or `### Name` to
+// the next same-or-higher heading). Returns the body only — the header line
+// itself is dropped.
+function extractSection(source: string, headerLine: string): string {
+  if (!source) return '';
+  const level = headerLine.startsWith('### ') ? 3 : 2;
+  const lines = source.split('\n');
+  const out: string[] = [];
   let capturing = false;
-
   for (const line of lines) {
-    if (line.startsWith('## ')) {
-      if (capturing && currentSection) {
-        chunks.push(currentSection.trimEnd());
-        currentSection = '';
-      }
-      capturing = SECTION_PREFIXES.some((prefix) => line.startsWith(prefix));
-      if (capturing) currentSection = line + '\n';
-    } else if (capturing) {
-      currentSection += line + '\n';
+    if (capturing) {
+      // Stop at any heading of equal or higher level (H2 breaks H2 and H3,
+      // H3 only breaks another H3 — H4+ stay inside).
+      if (line.startsWith('# ') || line.startsWith('## ')) break;
+      if (level === 3 && line.startsWith('### ')) break;
+      out.push(line);
+    } else if (line.startsWith(headerLine)) {
+      capturing = true;
     }
   }
-  if (capturing && currentSection) chunks.push(currentSection.trimEnd());
-
-  if (chunks.length === 0) return '';
-  return chunks.join('\n\n');
+  return out.join('\n').trim();
 }
 
-// Read brand-voice.md in full. The file is authored to be prompt-ready
-// (short, opinionated, no boilerplate) so we ship it whole rather than
-// slicing sections out of it.
-export function readBrandVoice(): string {
-  return readSafely(BRAND_VOICE_PATH);
+// Grab the leading bullets from a block of text — lines starting with `-`
+// or `*` up until the first non-bullet, non-blank line.
+function extractBullets(section: string): string[] {
+  const bullets: string[] = [];
+  let inList = false;
+  for (const raw of section.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('- ') || line.startsWith('* ')) {
+      inList = true;
+      bullets.push(line.slice(2).trim());
+    } else if (inList && line === '') {
+      // stop at the first blank line after we started listing
+      break;
+    }
+  }
+  return bullets;
 }
 
 function readSafely(p: string): string {
   try {
     if (!existsSync(p)) return '';
-    return readFileSync(p, 'utf8').trim();
+    return readFileSync(p, 'utf8');
   } catch {
     return '';
   }
 }
 
+// Build a compact style suffix drawn from BRAND.md §17 (Imagery rules) + §19
+// (Visual cues) + brand-voice.md (Voice words + Preferred tone). Chosen for
+// visual-generation relevance and to keep total budget under 2500 chars
+// including the user's own prompt.
+export function buildBrandStyleSuffix(): string {
+  const brand = readSafely(BRAND_PATH);
+  const voice = readSafely(BRAND_VOICE_PATH);
+
+  const visualWorld = extractBullets(extractSection(extractSection(brand, '## 17. Imagery rules'), '### Visual world'));
+  const avoidVisually = extractBullets(extractSection(extractSection(brand, '## 17. Imagery rules'), '### Avoid visually'));
+  const visualCues = extractBullets(extractSection(brand, '## 19. Visual cues'));
+  const voiceWords = extractBullets(extractSection(voice, '## Voice words'));
+  const preferredTone = extractBullets(extractSection(voice, '## Preferred tone'));
+
+  const lines: string[] = ['Brand style (Hair Mechanix):'];
+  if (visualWorld.length) lines.push(`- Visual world: ${visualWorld.join(', ')}.`);
+  if (visualCues.length) lines.push(`- Visual cues: ${visualCues.join('; ')}.`);
+  if (voiceWords.length || preferredTone.length) {
+    const mood = [...voiceWords, ...preferredTone].join(', ');
+    lines.push(`- Mood: ${mood}.`);
+  }
+  if (avoidVisually.length) lines.push(`- Avoid: ${avoidVisually.join(', ')}.`);
+
+  let suffix = lines.join('\n');
+  if (suffix.length > BRAND_SUFFIX_MAX_CHARS) {
+    suffix = suffix.slice(0, BRAND_SUFFIX_MAX_CHARS - 1).trimEnd() + '…';
+  }
+  return suffix;
+}
+
+// Prepend the user's prompt with the brand style suffix. User prompt goes
+// FIRST so the generation model sees the concrete goal before the style
+// constraints — model output quality is materially better this way, and any
+// downstream truncation preserves the important part.
 export function applyBrandContext(prompt: string, includeBrand: boolean | undefined): string {
   if (!includeBrand) return prompt;
-  const visualPreamble = extractBrandVisualPreamble();
-  const voice = readBrandVoice();
-  if (!visualPreamble && !voice) return prompt;
-
-  const parts: string[] = [];
-  parts.push('[Brand context — Hair Mechanix. The generated image or video should reflect these.]');
-  parts.push('');
-  if (visualPreamble) {
-    parts.push(visualPreamble);
-    parts.push('');
-  }
-  if (voice) {
-    parts.push('## Brand voice');
-    parts.push('');
-    parts.push(voice);
-    parts.push('');
-  }
-  parts.push('[End brand context — user prompt follows]');
-  parts.push('');
-  parts.push('');
-
-  return parts.join('\n') + prompt;
+  const suffix = buildBrandStyleSuffix();
+  if (!suffix) return prompt;
+  return `${prompt}\n\n${suffix}`;
 }
 
 export function getBrandFilePath(): string {
