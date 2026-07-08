@@ -239,6 +239,21 @@
     const [mediaDeleting, setMediaDeleting] = useState(false);
     const [mediaModalError, setMediaModalError] = useState<string | null>(null);
 
+    // Generate Media modal state
+    const [generateOpen, setGenerateOpen] = useState(false);
+    const [generateType, setGenerateType] = useState<'image' | 'video'>('image');
+    const [generatePrompt, setGeneratePrompt] = useState('');
+    const [generateSeedId, setGenerateSeedId] = useState<string | null>(null);
+    const [generateSeedPickerOpen, setGenerateSeedPickerOpen] = useState(false);
+    const [generateSeedItems, setGenerateSeedItems] = useState<any[]>([]);
+    const [generateStatus, setGenerateStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+    const [generateStatusText, setGenerateStatusText] = useState('');
+    const [generateJobId, setGenerateJobId] = useState<string | null>(null);
+    const [generateResultItem, setGenerateResultItem] = useState<any | null>(null);
+    const [generateResultUrl, setGenerateResultUrl] = useState<string>('');
+    const [generateError, setGenerateError] = useState<string | null>(null);
+    const generatePollRef = useRef<any>(null);
+
     const successTimeout = useRef<any>(null);
 
     const postizHeaders = useMemo(() => {
@@ -405,6 +420,166 @@
         setMediaDeleting(false);
       }
     }, [mediaModalItem, deleteMedia, closeMediaModal]);
+
+    // ---- Generate Media modal handlers ----
+
+    const resetGenerateModal = useCallback(() => {
+      setGenerateType('image');
+      setGeneratePrompt('');
+      setGenerateSeedId(null);
+      setGenerateSeedPickerOpen(false);
+      setGenerateStatus('idle');
+      setGenerateStatusText('');
+      setGenerateJobId(null);
+      setGenerateResultItem(null);
+      setGenerateResultUrl('');
+      setGenerateError(null);
+      if (generatePollRef.current) {
+        clearTimeout(generatePollRef.current);
+        generatePollRef.current = null;
+      }
+    }, []);
+
+    const openGenerateModal = useCallback((type: 'image' | 'video') => {
+      resetGenerateModal();
+      setGenerateType(type);
+      setGenerateOpen(true);
+    }, [resetGenerateModal]);
+
+    const closeGenerateModal = useCallback(() => {
+      setGenerateOpen(false);
+      resetGenerateModal();
+    }, [resetGenerateModal]);
+
+    const openGenerateSeedPicker = useCallback(async () => {
+      setGenerateSeedPickerOpen(true);
+      try {
+        // Fetch a large page of media, filter to images only for the picker.
+        const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=200`);
+        const json = await res.json();
+        const items = Array.isArray(json.data) ? json.data : [];
+        setGenerateSeedItems(items.filter((m: any) => String(m.mimeType || '').startsWith('image/')));
+      } catch {
+        setGenerateSeedItems([]);
+      }
+    }, [apiBase, teamId]);
+
+    const pickGenerateSeed = useCallback((item: any) => {
+      setGenerateSeedId(item.id);
+      setGenerateSeedPickerOpen(false);
+    }, []);
+
+    const clearGenerateSeed = useCallback(() => {
+      setGenerateSeedId(null);
+    }, []);
+
+    const fetchGeneratedPreview = useCallback(async (mediaId: string) => {
+      try {
+        const res = await fetch(`${apiBase}/media/${mediaId}/file?team=${encodeURIComponent(teamId)}`);
+        const json = await res.json();
+        if (json?.dataUrl) setGenerateResultUrl(String(json.dataUrl));
+      } catch {
+        // Preview will show as placeholder; item is still in library.
+      }
+    }, [apiBase, teamId]);
+
+    const pollGenerateJob = useCallback(async (jobId: string) => {
+      const startedAt = Date.now();
+      const CEILING_MS = 6 * 60 * 1000; // 6 minutes
+      const step = async () => {
+        if (Date.now() - startedAt > CEILING_MS) {
+          setGenerateStatus('failed');
+          setGenerateError('Generation timed out. The job may still finish — check the library shortly.');
+          return;
+        }
+        try {
+          const res = await fetch(`${apiBase}/jobs/${jobId}?team=${encodeURIComponent(teamId)}`);
+          const json = await res.json();
+          const job = json?.job;
+          if (!job) throw new Error('Job not found');
+          if (job.status === 'completed' && job.generatedMediaId) {
+            setGenerateStatus('completed');
+            // Refresh library first, then fetch the preview data URL.
+            await loadMedia();
+            // Look up the new item so we can render it inline.
+            const mediaRes = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}&limit=200`);
+            const mediaJson = await mediaRes.json();
+            const item = (mediaJson.data || []).find((m: any) => m.id === job.generatedMediaId);
+            setGenerateResultItem(item || { id: job.generatedMediaId });
+            await fetchGeneratedPreview(job.generatedMediaId);
+            return;
+          }
+          if (job.status === 'failed') {
+            setGenerateStatus('failed');
+            setGenerateError(String(job.error || 'Generation failed'));
+            return;
+          }
+          setGenerateStatusText(
+            generateType === 'video'
+              ? 'Generating video (this can take 1–3 minutes)…'
+              : 'Generating image…'
+          );
+        } catch (e: any) {
+          setGenerateStatus('failed');
+          setGenerateError(String(e?.message || e));
+          return;
+        }
+        generatePollRef.current = setTimeout(step, 4000);
+      };
+      await step();
+    }, [apiBase, teamId, generateType, loadMedia, fetchGeneratedPreview]);
+
+    const submitGenerate = useCallback(async () => {
+      const prompt = generatePrompt.trim();
+      if (!prompt) {
+        setGenerateError('Please enter a prompt.');
+        return;
+      }
+      setGenerateError(null);
+      setGenerateStatus('running');
+      setGenerateStatusText(
+        generateType === 'video'
+          ? 'Generating video (this can take 1–3 minutes)…'
+          : 'Generating image…'
+      );
+      try {
+        const url = generateSeedId
+          ? `${apiBase}/media/${generateSeedId}/generate?team=${encodeURIComponent(teamId)}`
+          : `${apiBase}/media/generate?team=${encodeURIComponent(teamId)}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, type: generateType }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(String(json?.message || json?.error || `Generation failed (HTTP ${res.status})`));
+        }
+        const jobId = json?.job?.id;
+        if (!jobId) throw new Error('Generation did not return a job id');
+        setGenerateJobId(jobId);
+        await pollGenerateJob(jobId);
+      } catch (e: any) {
+        setGenerateStatus('failed');
+        setGenerateError(String(e?.message || e));
+      }
+    }, [apiBase, teamId, generatePrompt, generateType, generateSeedId, pollGenerateJob]);
+
+    const regenerateGenerate = useCallback(() => {
+      // Return to form state; keep prompt/type/seed so the user can tweak.
+      setGenerateStatus('idle');
+      setGenerateStatusText('');
+      setGenerateJobId(null);
+      setGenerateResultItem(null);
+      setGenerateResultUrl('');
+      setGenerateError(null);
+    }, []);
+
+    useEffect(() => {
+      return () => {
+        if (generatePollRef.current) clearTimeout(generatePollRef.current);
+      };
+    }, []);
 
     useEffect(() => {
       setLoading(true);
@@ -990,6 +1165,18 @@
             h('div', { className: 'flex items-center gap-2' },
               h('button', {
                 type: 'button',
+                onClick: () => openGenerateModal('image'),
+                style: { ...t.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
+                title: 'Generate a new image from a text prompt',
+              }, '+ Image'),
+              h('button', {
+                type: 'button',
+                onClick: () => openGenerateModal('video'),
+                style: { ...t.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
+                title: 'Generate a new video from a text prompt',
+              }, '+ Video'),
+              h('button', {
+                type: 'button',
                 onClick: () => fileInputRef.current?.click(),
                 style: { ...t.btnGhost, padding: '0.3rem 0.6rem', fontSize: '0.75rem' },
               }, '+ Upload'),
@@ -1268,6 +1455,235 @@
               ),
             ),
           ),
+        ),
+      ),
+
+      // ---- Generate Media modal ----
+      generateOpen && h('div', { style: t.modalOverlay, onClick: closeGenerateModal },
+        h('div', {
+          style: { ...t.modalCard, maxWidth: '780px' },
+          onClick: (e: any) => e.stopPropagation(),
+        },
+          h('button', { type: 'button', onClick: closeGenerateModal, style: t.modalCloseBtn, 'aria-label': 'Close' }, '×'),
+          h('div', { style: t.modalTopbar },
+            h('div', { style: t.modalTopbarTitle }, 'Generate Media'),
+            h('div', { style: t.modalTopbarLabel },
+              generateStatus === 'idle' ? 'Prompt' :
+              generateStatus === 'running' ? 'Working…' :
+              generateStatus === 'completed' ? 'Result' : 'Error'
+            ),
+          ),
+
+          // FORM state
+          generateStatus === 'idle' && h('div', { style: { display: 'grid', gap: '18px' } },
+            // Type toggle
+            h('div', null,
+              h('div', { style: { fontSize: '0.75rem', color: 'var(--ck-text-secondary)', marginBottom: '0.4rem' } }, 'Type'),
+              h('div', { style: { display: 'flex', gap: '0.5rem' } },
+                (['image', 'video'] as const).map((tp) =>
+                  h('button', {
+                    key: tp,
+                    type: 'button',
+                    onClick: () => setGenerateType(tp),
+                    style: {
+                      ...t.btnGhost,
+                      padding: '0.5rem 1rem',
+                      background: generateType === tp ? 'rgba(99,179,237,0.16)' : t.btnGhost.background,
+                      borderColor: generateType === tp ? 'rgba(99,179,237,0.45)' : t.btnGhost.border,
+                      color: generateType === tp ? 'rgba(210,235,255,0.95)' : t.btnGhost.color,
+                    },
+                  }, tp === 'image' ? 'Image' : 'Video'),
+                ),
+              ),
+            ),
+
+            // Seed picker
+            h('div', null,
+              h('div', { style: { fontSize: '0.75rem', color: 'var(--ck-text-secondary)', marginBottom: '0.4rem' } }, 'Seed image (optional)'),
+              (() => {
+                const seedItem = generateSeedId
+                  ? mediaLibrary.find((m) => m.id === generateSeedId) || generateSeedItems.find((m) => m.id === generateSeedId)
+                  : null;
+                if (seedItem) {
+                  const thumb = String(seedItem.thumbnailDataUrl || seedItem.thumbnailUrl || '');
+                  return h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.75rem' } },
+                    thumb && h('img', {
+                      src: thumb,
+                      alt: seedItem.originalName || '',
+                      style: { width: '80px', height: '80px', objectFit: 'cover' as const, borderRadius: '10px', border: '1px solid var(--ck-border-subtle)' },
+                    }),
+                    h('div', { style: { fontSize: '0.85rem', color: 'var(--ck-text-primary)', flex: 1 } },
+                      seedItem.originalName || seedItem.filename || 'Seed image',
+                    ),
+                    h('button', {
+                      type: 'button',
+                      onClick: clearGenerateSeed,
+                      style: { ...t.btnGhost, padding: '0.4rem 0.7rem', fontSize: '0.8rem' },
+                    }, '× Remove'),
+                  );
+                }
+                return h('div', null,
+                  h('button', {
+                    type: 'button',
+                    onClick: () => void openGenerateSeedPicker(),
+                    style: { ...t.btnGhost, padding: '0.5rem 0.85rem' },
+                  }, 'Pick from library →'),
+                );
+              })(),
+            ),
+
+            // Prompt
+            h('div', null,
+              h('div', { style: { fontSize: '0.75rem', color: 'var(--ck-text-secondary)', marginBottom: '0.4rem' } }, 'Prompt'),
+              h('textarea', {
+                value: generatePrompt,
+                onChange: (e: any) => setGeneratePrompt(e.target.value),
+                placeholder: generateType === 'video'
+                  ? 'Describe the video you want — camera motion, subject, style…'
+                  : 'Describe the image you want…',
+                rows: 5,
+                style: { ...t.input, resize: 'vertical' as const, fontFamily: 'inherit' },
+              }),
+            ),
+
+            generateError && h('div', {
+              style: { color: 'rgba(248,113,113,0.95)', fontSize: '0.85rem' },
+            }, generateError),
+
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' } },
+              h('button', {
+                type: 'button',
+                onClick: closeGenerateModal,
+                style: t.btnGhost,
+              }, 'Cancel'),
+              h('button', {
+                type: 'button',
+                onClick: () => void submitGenerate(),
+                disabled: !generatePrompt.trim(),
+                style: {
+                  ...t.btnPrimary,
+                  opacity: !generatePrompt.trim() ? 0.5 : 1,
+                  cursor: !generatePrompt.trim() ? 'not-allowed' as const : 'pointer' as const,
+                },
+              }, 'Generate'),
+            ),
+          ),
+
+          // LOADING state
+          generateStatus === 'running' && h('div', {
+            style: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center' as const, gap: '1rem', padding: '3rem 1rem', textAlign: 'center' as const },
+          },
+            h('div', {
+              style: {
+                width: '48px',
+                height: '48px',
+                border: '4px solid rgba(255,255,255,0.1)',
+                borderTopColor: 'var(--ck-accent-red)',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+              },
+            }),
+            h('div', { style: { color: 'var(--ck-text-secondary)', fontSize: '0.95rem' } }, generateStatusText || 'Working…'),
+            h('style', null, '@keyframes spin { to { transform: rotate(360deg); } }'),
+          ),
+
+          // COMPLETED state — preview + Regenerate/Done
+          generateStatus === 'completed' && h('div', { style: { display: 'grid', gap: '18px' } },
+            h('div', {
+              style: {
+                background: 'rgba(0,0,0,0.4)',
+                border: '1px solid var(--ck-border-subtle)',
+                borderRadius: '12px',
+                padding: '0.5rem',
+                minHeight: '240px',
+                display: 'flex' as const,
+                alignItems: 'center' as const,
+                justifyContent: 'center' as const,
+              },
+            },
+              !generateResultUrl
+                ? h('div', { style: { color: 'var(--ck-text-tertiary)', fontSize: '0.9rem' } }, 'Loading preview…')
+                : generateType === 'video'
+                  ? h('video', { src: generateResultUrl, controls: true, style: { maxWidth: '100%', maxHeight: '60vh', borderRadius: '8px' } })
+                  : h('img', { src: generateResultUrl, alt: 'Generated result', style: { maxWidth: '100%', maxHeight: '60vh', borderRadius: '8px', objectFit: 'contain' as const, display: 'block' } }),
+            ),
+            h('div', {
+              style: { color: 'rgba(134,239,172,0.9)', fontSize: '0.85rem' },
+            }, `Saved to library ✓${generateResultItem?.originalName ? `  ·  ${generateResultItem.originalName}` : ''}`),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' } },
+              h('button', { type: 'button', onClick: regenerateGenerate, style: t.btnGhost }, 'Regenerate'),
+              h('button', { type: 'button', onClick: closeGenerateModal, style: t.btnPrimary }, 'Done'),
+            ),
+          ),
+
+          // ERROR state
+          generateStatus === 'failed' && h('div', { style: { display: 'grid', gap: '18px' } },
+            h('div', {
+              style: {
+                background: 'rgba(248,113,113,0.08)',
+                border: '1px solid rgba(248,113,113,0.35)',
+                borderRadius: '10px',
+                padding: '1rem',
+                color: 'rgba(248,113,113,0.95)',
+                fontSize: '0.9rem',
+              },
+            }, generateError || 'Generation failed'),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' } },
+              h('button', { type: 'button', onClick: closeGenerateModal, style: t.btnGhost }, 'Close'),
+              h('button', { type: 'button', onClick: regenerateGenerate, style: t.btnPrimary }, 'Try again'),
+            ),
+          ),
+        ),
+      ),
+
+      // ---- Seed picker sub-modal ----
+      generateOpen && generateSeedPickerOpen && h('div', {
+        style: { ...t.modalOverlay, zIndex: 10000 },
+        onClick: () => setGenerateSeedPickerOpen(false),
+      },
+        h('div', {
+          style: { ...t.modalCard, maxWidth: '1100px' },
+          onClick: (e: any) => e.stopPropagation(),
+        },
+          h('button', { type: 'button', onClick: () => setGenerateSeedPickerOpen(false), style: t.modalCloseBtn, 'aria-label': 'Close' }, '×'),
+          h('div', { style: t.modalTopbar },
+            h('div', { style: t.modalTopbarTitle }, 'Pick a seed image'),
+            h('div', { style: t.modalTopbarLabel }, `${generateSeedItems.length} image${generateSeedItems.length === 1 ? '' : 's'}`),
+          ),
+          generateSeedItems.length === 0
+            ? h('div', { style: { padding: '3rem 1rem', textAlign: 'center' as const, color: 'var(--ck-text-tertiary)' } }, 'No images in the library yet.')
+            : h('div', {
+                style: {
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                  gap: '1rem',
+                },
+              },
+              ...generateSeedItems.map((item: any) => {
+                const thumb = String(item.thumbnailDataUrl || item.thumbnailUrl || '');
+                return h('div', {
+                  key: item.id,
+                  onClick: () => pickGenerateSeed(item),
+                  style: {
+                    aspectRatio: '1',
+                    background: 'rgba(0,0,0,0.35)',
+                    border: '1px solid var(--ck-border-subtle)',
+                    borderRadius: '12px',
+                    overflow: 'hidden' as const,
+                    cursor: 'pointer' as const,
+                    display: 'flex' as const,
+                    alignItems: 'center' as const,
+                    justifyContent: 'center' as const,
+                    position: 'relative' as const,
+                  },
+                  title: item.originalName || item.filename || '',
+                },
+                  thumb
+                    ? h('img', { src: thumb, alt: item.originalName || '', style: { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' } })
+                    : h('div', { style: { color: 'var(--ck-text-tertiary)', fontSize: '0.85rem', padding: '0.5rem' } }, '🖼'),
+                );
+              }),
+            ),
         ),
       ),
     );
