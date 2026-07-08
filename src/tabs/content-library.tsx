@@ -1582,7 +1582,10 @@
                 onChange: (e: any) => setGenerateIncludeBrand(Boolean(e.target.checked)),
                 style: { accentColor: 'var(--ck-accent-red)' },
               }),
-              h('span', null, 'Use Hair Mechanix brand style'),
+              h('span', null,
+                'Use Hair Mechanix brand style ',
+                h('span', { style: { opacity: 0.65 } }, '(seeds the prompt with BRAND.md + brand-voice.md)'),
+              ),
             ),
 
             // Seed picker
