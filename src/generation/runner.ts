@@ -6,7 +6,8 @@ import { execFile } from 'child_process';
 import { eq, and } from 'drizzle-orm';
 import { initializeDatabase } from '../db';
 import * as schema from '../db/schema';
-import { generateImage, generateVideo, generateImageFromPrompt } from './drivers';
+import { generateImage, generateVideo, generateImageFromPrompt, generateVideoFromPrompt } from './drivers';
+import { applyBrandContext } from './brand-context';
 import type { GenerationRequest, GenerationJobResponse } from './types';
 
 const MEDIA_DIR = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing', 'media');
@@ -181,11 +182,11 @@ export function startPromptGenerationJob(
 ): GenerationJobResponse {
   const { db } = initializeDatabase(teamId);
 
-  if (request.type !== 'image') {
-    throw new Error('Prompt-only generation currently supports image type only. Video requires a source image.');
+  if (request.type !== 'image' && request.type !== 'video') {
+    throw new Error('type must be "image" or "video"');
   }
 
-  const provider = request.provider || 'gemini';
+  const provider = request.provider || (request.type === 'video' ? 'klingai' : 'gemini');
   const jobId = randomUUID();
   const now = new Date().toISOString();
 
@@ -206,7 +207,7 @@ export function startPromptGenerationJob(
 
   db.insert(schema.generationJobs).values(jobRecord).run();
 
-  const filename = request.filename || 'generated-image';
+  const filename = request.filename || (request.type === 'video' ? 'generated-video' : 'generated-image');
   runPromptGeneration(teamId, jobId, filename, request, userId)
     .catch(() => {});
 
@@ -225,7 +226,17 @@ async function runPromptGeneration(
   mkdirSync(outputDir, { recursive: true });
 
   try {
-    const result = await generateImageFromPrompt(request.prompt, outputDir, request.config);
+    const videoConfig = request.type === 'video'
+      ? { ...request.config, duration: request.config?.duration ?? getVideoDuration(teamId) }
+      : request.config;
+
+    // Prepend the brand visual preamble when the caller opted in. The DB
+    // record still stores the raw user prompt so it reads cleanly in the
+    // media modal — the brand context only augments what the driver sees.
+    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand);
+    const result = request.type === 'video'
+      ? await generateVideoFromPrompt(effectivePrompt, outputDir, videoConfig)
+      : await generateImageFromPrompt(effectivePrompt, outputDir, request.config);
 
     if (!existsSync(result.filePath)) {
       throw new Error(`Generated file not found at ${result.filePath}`);
@@ -240,43 +251,72 @@ async function runPromptGeneration(
       .filter((m) => m.originalName?.startsWith(baseName)).length;
     const versionSuffix = existingCount > 0 ? `-${existingCount + 1}` : '';
 
-    const quality = getCompressionQuality(teamId);
-    let finalPath = result.filePath;
-    try {
-      const compressedPath = await compressImage(result.filePath, outputDir, quality);
-      if (statSync(compressedPath).size < statSync(result.filePath).size) {
-        finalPath = compressedPath;
-      }
-    } catch { /* use original */ }
-
     const newMediaId = randomUUID();
-    const storedFilename = `${newMediaId}.jpg`;
     const mediaDir = join(MEDIA_DIR, teamId);
     mkdirSync(mediaDir, { recursive: true });
 
+    let finalPath = result.filePath;
+    let finalMime: string;
+    let storedExt: string;
+    let thumbnailUrl: string | null = null;
+    let tags: string;
+
+    if (request.type === 'video') {
+      finalMime = MIME_BY_EXT[extname(result.filePath).toLowerCase()] || 'video/mp4';
+      storedExt = extname(result.filePath).toLowerCase() || '.mp4';
+      try {
+        const thumbPath = await extractVideoThumbnail(result.filePath, outputDir);
+        if (thumbPath && existsSync(thumbPath)) {
+          const thumbBuffer = readFileSync(thumbPath);
+          if (thumbBuffer.length < 2 * 1024 * 1024) {
+            thumbnailUrl = `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
+          }
+        }
+      } catch { /* video will show without preview */ }
+      tags = JSON.stringify([
+        'ai-generated',
+        'text-to-video',
+        `source:${request.provider || 'klingai'}`,
+        'pending-save',
+      ]);
+    } else {
+      const quality = getCompressionQuality(teamId);
+      try {
+        const compressedPath = await compressImage(result.filePath, outputDir, quality);
+        if (statSync(compressedPath).size < statSync(result.filePath).size) {
+          finalPath = compressedPath;
+        }
+      } catch { /* use original */ }
+      finalMime = 'image/jpeg';
+      storedExt = '.jpg';
+      tags = JSON.stringify([
+        'ai-generated',
+        'text-to-image',
+        `source:${request.provider || 'gemini'}`,
+        'pending-save',
+      ]);
+    }
+
+    const storedFilename = `${newMediaId}${storedExt}`;
     const fileBuffer = readFileSync(finalPath);
     writeFileSync(join(mediaDir, storedFilename), fileBuffer);
 
     const now = new Date().toISOString();
-    const tags = JSON.stringify([
-      'ai-generated',
-      'text-to-image',
-      `source:${request.provider || 'gemini'}`,
-    ]);
 
     db.insert(schema.media).values({
       id: newMediaId,
       teamId,
       filename: storedFilename,
-      originalName: `${baseName}${versionSuffix}.jpg`,
-      mimeType: 'image/jpeg',
+      originalName: `${baseName}${versionSuffix}${storedExt}`,
+      mimeType: finalMime,
       size: fileBuffer.length,
       width: null,
       height: null,
       alt: null,
       tags,
       url: `/api/plugins/marketing/media/${newMediaId}/file?team=${encodeURIComponent(teamId)}`,
-      thumbnailUrl: null,
+      thumbnailUrl,
+      prompt: request.prompt,
       createdAt: now,
       createdBy: userId,
     }).run();
@@ -321,9 +361,12 @@ async function runGeneration(
       ? { ...request.config, duration: request.config?.duration ?? getVideoDuration(teamId) }
       : request.config;
 
+    // Same brand-context augmentation as the prompt-only path; raw prompt
+    // is preserved on the DB record.
+    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand);
     const result = request.type === 'image'
-      ? await generateImage(sourcePath, request.prompt, outputDir, request.config)
-      : await generateVideo(sourcePath, request.prompt, outputDir, videoConfig);
+      ? await generateImage(sourcePath, effectivePrompt, outputDir, request.config)
+      : await generateVideo(sourcePath, effectivePrompt, outputDir, videoConfig);
 
     if (!existsSync(result.filePath)) {
       throw new Error(`Generated file not found at ${result.filePath}`);
@@ -397,6 +440,7 @@ async function runGeneration(
       'ai-generated',
       request.type === 'video' ? 'video' : 'derived',
       `source:${request.provider || (request.type === 'image' ? 'gemini' : 'klingai')}`,
+      'pending-save',
       `source-media:${sourceMediaId}`,
     ]);
 

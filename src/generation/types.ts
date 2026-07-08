@@ -2,6 +2,7 @@ export interface GenerationRequest {
   prompt: string;
   type: 'image' | 'video';
   provider?: string;
+  includeBrand?: boolean;
   config?: {
     duration?: number;
     aspectRatio?: string;
