@@ -7,6 +7,7 @@ import { eq, and } from 'drizzle-orm';
 import { initializeDatabase } from '../db';
 import * as schema from '../db/schema';
 import { generateImage, generateVideo, generateImageFromPrompt, generateVideoFromPrompt } from './drivers';
+import { applyBrandContext } from './brand-context';
 import type { GenerationRequest, GenerationJobResponse } from './types';
 
 const MEDIA_DIR = join(homedir(), '.openclaw', 'kitchen', 'plugins', 'marketing', 'media');
@@ -229,9 +230,13 @@ async function runPromptGeneration(
       ? { ...request.config, duration: request.config?.duration ?? getVideoDuration(teamId) }
       : request.config;
 
+    // Prepend the brand visual preamble when the caller opted in. The DB
+    // record still stores the raw user prompt so it reads cleanly in the
+    // media modal — the brand context only augments what the driver sees.
+    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand);
     const result = request.type === 'video'
-      ? await generateVideoFromPrompt(request.prompt, outputDir, videoConfig)
-      : await generateImageFromPrompt(request.prompt, outputDir, request.config);
+      ? await generateVideoFromPrompt(effectivePrompt, outputDir, videoConfig)
+      : await generateImageFromPrompt(effectivePrompt, outputDir, request.config);
 
     if (!existsSync(result.filePath)) {
       throw new Error(`Generated file not found at ${result.filePath}`);
@@ -354,9 +359,12 @@ async function runGeneration(
       ? { ...request.config, duration: request.config?.duration ?? getVideoDuration(teamId) }
       : request.config;
 
+    // Same brand-context augmentation as the prompt-only path; raw prompt
+    // is preserved on the DB record.
+    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand);
     const result = request.type === 'image'
-      ? await generateImage(sourcePath, request.prompt, outputDir, request.config)
-      : await generateVideo(sourcePath, request.prompt, outputDir, videoConfig);
+      ? await generateImage(sourcePath, effectivePrompt, outputDir, request.config)
+      : await generateVideo(sourcePath, effectivePrompt, outputDir, videoConfig);
 
     if (!existsSync(result.filePath)) {
       throw new Error(`Generated file not found at ${result.filePath}`);

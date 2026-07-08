@@ -243,6 +243,13 @@
     const [generateOpen, setGenerateOpen] = useState(false);
     const [generateType, setGenerateType] = useState<'image' | 'video'>('image');
     const [generatePrompt, setGeneratePrompt] = useState('');
+    const [generateIncludeBrand, setGenerateIncludeBrand] = useState<boolean>(() => {
+      // Persist per-team; default ON so new users get brand-consistent output.
+      try {
+        const stored = localStorage.getItem(`ck-generate-brand-${teamId}`);
+        return stored === null ? true : stored === '1';
+      } catch { return true; }
+    });
     const [generateSeedId, setGenerateSeedId] = useState<string | null>(null);
     const [generateSeedPickerOpen, setGenerateSeedPickerOpen] = useState(false);
     const [generateSeedItems, setGenerateSeedItems] = useState<any[]>([]);
@@ -549,7 +556,7 @@
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, type: generateType }),
+          body: JSON.stringify({ prompt, type: generateType, includeBrand: generateIncludeBrand }),
         });
         const json = await res.json();
         if (!res.ok) {
@@ -563,7 +570,15 @@
         setGenerateStatus('failed');
         setGenerateError(String(e?.message || e));
       }
-    }, [apiBase, teamId, generatePrompt, generateType, generateSeedId, pollGenerateJob]);
+    }, [apiBase, teamId, generatePrompt, generateType, generateSeedId, generateIncludeBrand, pollGenerateJob]);
+
+    // Persist the "Use brand style" toggle per team so the user's preference
+    // survives across sessions. Kept out of any Effect that depends on the
+    // modal being open — the write is cheap and keeps the storage in sync.
+    useEffect(() => {
+      try { localStorage.setItem(`ck-generate-brand-${teamId}`, generateIncludeBrand ? '1' : '0'); }
+      catch { /* localStorage unavailable — fine */ }
+    }, [teamId, generateIncludeBrand]);
 
     const regenerateGenerate = useCallback(() => {
       // Return to form state; keep prompt/type/seed so the user can tweak.
@@ -1495,6 +1510,27 @@
                   }, tp === 'image' ? 'Image' : 'Video'),
                 ),
               ),
+            ),
+
+            // Brand style toggle — augments the prompt server-side with the
+            // Hair Mechanix brand visual guidelines (from BRAND.md §17 / §19).
+            h('label', {
+              style: {
+                display: 'flex' as const,
+                alignItems: 'center' as const,
+                gap: '0.5rem',
+                fontSize: '0.85rem',
+                color: 'var(--ck-text-primary)',
+                cursor: 'pointer' as const,
+              },
+            },
+              h('input', {
+                type: 'checkbox',
+                checked: generateIncludeBrand,
+                onChange: (e: any) => setGenerateIncludeBrand(Boolean(e.target.checked)),
+                style: { accentColor: 'var(--ck-accent-red)' },
+              }),
+              h('span', null, 'Use Hair Mechanix brand style'),
             ),
 
             // Seed picker
