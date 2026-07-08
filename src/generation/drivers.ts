@@ -133,8 +133,24 @@ export async function generateImage(
   };
   const sourceMime = MIME_MAP[ext] || 'image/png';
 
+  const attempt = async () => callGeminiImageEdit(prompt, sourceMime, sourceBase64, configEnv.GEMINI_API_KEY!, outputDir);
+  try {
+    return await attempt();
+  } catch (e: any) {
+    if (isTransientGeminiFailure(e)) return await attempt();
+    throw e;
+  }
+}
+
+async function callGeminiImageEdit(
+  prompt: string,
+  sourceMime: string,
+  sourceBase64: string,
+  apiKey: string,
+  outputDir: string,
+): Promise<DriverResult> {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${configEnv.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -323,8 +339,25 @@ export async function generateImageFromPrompt(
 
   mkdirSync(outputDir, { recursive: true });
 
+  // Gemini occasionally returns 200 OK with no inlineData part — the model
+  // "answered" the prompt with text-only refusal or empty candidates. Both
+  // are non-deterministic, so a single retry salvages most of them.
+  const attempt = async () => callGeminiTextToImage(prompt, configEnv.GEMINI_API_KEY!, outputDir);
+  try {
+    return await attempt();
+  } catch (e: any) {
+    if (isTransientGeminiFailure(e)) return await attempt();
+    throw e;
+  }
+}
+
+async function callGeminiTextToImage(
+  prompt: string,
+  apiKey: string,
+  outputDir: string,
+): Promise<DriverResult> {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${configEnv.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -358,4 +391,13 @@ export async function generateImageFromPrompt(
   }
 
   throw new Error('Gemini returned no image data in the response');
+}
+
+// Retry these categories exactly once. Both are known-flaky Gemini failure
+// modes that resolve on a re-try in practice.
+function isTransientGeminiFailure(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e);
+  if (/no image data in the response/i.test(message)) return true;
+  if (/Gemini API error \((?:429|5\d\d)\)/.test(message)) return true;
+  return false;
 }
