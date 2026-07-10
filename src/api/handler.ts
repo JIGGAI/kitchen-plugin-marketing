@@ -1,4 +1,4 @@
-import { and, desc, eq, like, notLike, sql } from 'drizzle-orm';
+import { and, desc, eq, like, notLike, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, renameSync } from 'fs';
 import { join, extname } from 'path';
@@ -1162,6 +1162,36 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // GET /media/tags — distinct content tags across the media library, for the
+  // seed-image tag cloud. Excludes "derived" tags (generation/source metadata:
+  // ai-generated, text-to-image, source:*, video, human, …) so only descriptive
+  // content tags remain. Pass ?mimeType=image/ to scope to images.
+  if (req.path === '/media/tags' && req.method === 'GET') {
+    try {
+      const { sqlite } = initializeDatabase(teamId);
+      const mimePrefix = req.query.mimeType ? String(req.query.mimeType) : null;
+      const rows = sqlite.prepare(
+        `SELECT je.value AS tag, COUNT(*) AS count
+         FROM media, json_each(media.tags) je
+         WHERE media.team_id = ?
+           AND json_valid(media.tags)
+           AND media.tags != '[]'
+           AND media.tags NOT LIKE '%"pending-save"%'
+           ${mimePrefix ? "AND media.mime_type LIKE ? || '%'" : ''}
+         GROUP BY je.value
+         ORDER BY count DESC, tag ASC`,
+      ).all(...(mimePrefix ? [teamId, mimePrefix] : [teamId])) as Array<{ tag: string; count: number }>;
+      const DERIVED = new Set(['derived', 'ai-generated', 'text-to-image', 'text-to-video', 'image-to-video', 'video', 'image', 'pending-save', 'human', 'ai']);
+      const isDerived = (t: string) => t.includes(':') || DERIVED.has(t.toLowerCase());
+      const tags = rows
+        .filter((r) => r.tag && !isDerived(String(r.tag)))
+        .map((r) => ({ tag: String(r.tag), count: Number(r.count) }));
+      return { status: 200, data: { tags } };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to load media tags');
+    }
+  }
+
   // GET /media — list media assets
   if (req.path === '/media' && req.method === 'GET') {
     try {
@@ -1171,6 +1201,21 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const conditions = [eq(schema.media.teamId, teamId)];
       if (req.query.mimeType) {
         conditions.push(like(schema.media.mimeType, `${req.query.mimeType}%`));
+      }
+      // Filter by a single tag (exact tag within the JSON tags array).
+      if (req.query.tag) {
+        const tag = String(req.query.tag);
+        if (!tag.includes('"')) conditions.push(like(schema.media.tags, `%"${tag}"%`));
+      }
+      // Free-text search across name / alt text / prompt / tags.
+      if (req.query.search) {
+        const s = `%${String(req.query.search)}%`;
+        conditions.push(or(
+          like(schema.media.originalName, s),
+          like(schema.media.alt, s),
+          like(schema.media.prompt, s),
+          like(schema.media.tags, s),
+        )!);
       }
       // Hide pending-save items — those are Generate Media previews the
       // user has NOT yet clicked "Save media" on. `?includePending=1` opts
