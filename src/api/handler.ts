@@ -10,6 +10,7 @@ import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type
 import { getPostizIntegrations, postizDeletePost, postizListPosts } from '../drivers/postiz-backend';
 import { shouldCascadeToPostiz } from './postiz-cascade-policy';
 import { selectNextBasePhotos, getRotationStatus } from './base-photo-rotation';
+import { mediaResponseFields } from './media-response';
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
@@ -1255,15 +1256,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
           thumbnailDataUrl = m.thumbnailUrl;
         }
         return {
-          id: m.id,
-          filename: m.originalName,
-          mimeType: m.mimeType,
-          size: m.size,
-          url: m.url,
+          ...mediaResponseFields(m),
           thumbnailDataUrl,
-          alt: m.alt,
-          tags: JSON.parse(m.tags || '[]'),
-          createdAt: m.createdAt,
         };
       });
 
@@ -1334,15 +1328,8 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       return {
         status: 200,
         data: {
-          id: item.id,
-          filename: item.originalName,
-          mimeType: item.mimeType,
-          size: item.size,
-          url: item.url,
+          ...mediaResponseFields(item),
           dataUrl,
-          alt: item.alt,
-          tags: JSON.parse(item.tags || '[]'),
-          createdAt: item.createdAt,
         },
       };
     } catch (error: any) {
