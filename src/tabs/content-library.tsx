@@ -453,6 +453,16 @@
       setGenerateOpen(true);
     }, [resetGenerateModal]);
 
+    // Best-effort delete of a pending-save item on the server. Ignores
+    // errors — the pending-save filter keeps the row out of the library
+    // anyway; a stale row won't confuse users.
+    const discardPending = useCallback(async (id: string | null | undefined) => {
+      if (!id) return;
+      try {
+        await fetch(`${apiBase}/media/${id}?team=${encodeURIComponent(teamId)}`, { method: 'DELETE' });
+      } catch { /* best-effort */ }
+    }, [apiBase, teamId]);
+
     const closeGenerateModal = useCallback(() => {
       // If the user leaves via the overlay / × while sitting on an unsaved
       // preview, discard the pending-save row server-side.
@@ -584,16 +594,6 @@
       try { localStorage.setItem(`ck-generate-brand-${teamId}`, generateIncludeBrand ? '1' : '0'); }
       catch { /* localStorage unavailable — fine */ }
     }, [teamId, generateIncludeBrand]);
-
-    // Best-effort delete of a pending-save item on the server. Ignores
-    // errors — the pending-save filter keeps the row out of the library
-    // anyway; a stale row won't confuse users.
-    const discardPending = useCallback(async (id: string | null | undefined) => {
-      if (!id) return;
-      try {
-        await fetch(`${apiBase}/media/${id}?team=${encodeURIComponent(teamId)}`, { method: 'DELETE' });
-      } catch { /* best-effort */ }
-    }, [apiBase, teamId]);
 
     const [generateSaving, setGenerateSaving] = useState<'saving' | 'discarding' | null>(null);
 
