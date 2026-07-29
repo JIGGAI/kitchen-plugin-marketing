@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, mkdirSync, statSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { join, extname, dirname } from 'path';
 import { homedir } from 'os';
@@ -64,6 +64,46 @@ function spawnScript(
   });
 }
 
+function runFile(command: string, args: string[], timeoutMs = 60_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: timeoutMs, maxBuffer: 5 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error) {
+        reject(new Error(`${command} failed: ${error.message}${stderr ? `\n${String(stderr).trim()}` : ''}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function prepareImageEditSource(sourcePath: string, outputDir: string): Promise<string> {
+  const sourceSize = statSync(sourcePath).size;
+  const preparedPath = join(outputDir, 'source-for-gemini.jpg');
+
+  // Weekly source photos are often phone-camera originals (30-50 MB,
+  // 5K-8K pixels). Sending those directly makes Gemini image edits fail
+  // intermittently as a low-detail "fetch failed". Use a bounded working
+  // copy for generation while preserving the original media record.
+  try {
+    await runFile('ffmpeg', [
+      '-y',
+      '-i', sourcePath,
+      '-vf', 'scale=1600:1600:force_original_aspect_ratio=decrease',
+      '-q:v', '4',
+      preparedPath,
+    ]);
+    if (existsSync(preparedPath) && statSync(preparedPath).size > 0) {
+      return preparedPath;
+    }
+  } catch (error) {
+    if (sourceSize > 10 * 1024 * 1024) {
+      console.warn(`[generation] Could not prepare smaller Gemini source image: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return sourcePath;
+}
+
 export function normalizeGenerationError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
 
@@ -89,6 +129,7 @@ export async function generateImage(
   const configEnv = loadConfigEnv();
 
   mkdirSync(outputDir, { recursive: true });
+  const preparedSourcePath = await prepareImageEditSource(sourcePath, outputDir);
 
   // Try nano-banana-pro skill first — image edit via Gemini 3 Pro Image.
   const banana = await tryNanoBananaPro({
@@ -96,7 +137,7 @@ export async function generateImage(
     outputDir,
     configEnv,
     config,
-    sourcePaths: [sourcePath],
+    sourcePaths: [preparedSourcePath],
   });
   if (banana) return banana;
 
@@ -104,9 +145,9 @@ export async function generateImage(
   if (!configEnv.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is not configured. Set it in ~/.config/openclaw/env');
   }
-  const sourceBuffer = await readFile(sourcePath);
+  const sourceBuffer = await readFile(preparedSourcePath);
   const sourceBase64 = sourceBuffer.toString('base64');
-  const ext = extname(sourcePath).toLowerCase();
+  const ext = extname(preparedSourcePath).toLowerCase();
   const MIME_MAP: Record<string, string> = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
     '.webp': 'image/webp', '.gif': 'image/gif',
