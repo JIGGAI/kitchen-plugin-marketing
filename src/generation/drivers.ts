@@ -41,12 +41,14 @@ function spawnScript(
   runner: string,
   scriptPath: string,
   args: string[],
-  opts: { cwd: string; env: Record<string, string>; timeoutMs?: number },
+  opts: { cwd: string; env: Record<string, string>; timeoutMs?: number; unsetEnv?: string[] },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    const childEnv = { ...process.env, ...opts.env };
+    for (const key of opts.unsetEnv || []) delete childEnv[key];
     execFile(runner, [scriptPath, ...args], {
       cwd: opts.cwd,
-      env: { ...process.env, ...opts.env },
+      env: childEnv,
       timeout: opts.timeoutMs ?? 120_000,
       maxBuffer: 10 * 1024 * 1024,
     }, (error, stdout, stderr) => {
@@ -74,6 +76,10 @@ function runFile(command: string, args: string[], timeoutMs = 60_000): Promise<v
       resolve();
     });
   });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function prepareImageEditSource(sourcePath: string, outputDir: string): Promise<string> {
@@ -384,6 +390,9 @@ async function tryNanoBananaPro(opts: {
     '--filename', filename,
     '--resolution', resolution,
   ];
+  if (opts.configEnv.GEMINI_API_KEY) {
+    scriptArgs.push('--api-key', opts.configEnv.GEMINI_API_KEY);
+  }
   for (const src of opts.sourcePaths || []) scriptArgs.push('-i', src);
 
   const env: Record<string, string> = {
@@ -392,15 +401,29 @@ async function tryNanoBananaPro(opts: {
   };
 
   let stdout = '';
-  try {
-    const result = await spawnScript(uvPath, 'run', scriptArgs, {
-      cwd: opts.outputDir,
-      env,
-      timeoutMs: 240_000,
-    });
-    stdout = result.stdout;
-  } catch (e: any) {
-    console.warn('[nano-banana-pro] uv run failed:', e?.message?.slice(0, 300));
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const result = await spawnScript(uvPath, 'run', scriptArgs, {
+        cwd: opts.outputDir,
+        env,
+        unsetEnv: opts.configEnv.GEMINI_API_KEY ? ['GOOGLE_API_KEY'] : undefined,
+        timeoutMs: 240_000,
+      });
+      stdout = result.stdout;
+      lastError = null;
+      break;
+    } catch (e: any) {
+      lastError = e;
+      if (attempt < 2 && isTransientGeminiFailure(e)) {
+        await sleep(3_000);
+        continue;
+      }
+      break;
+    }
+  }
+  if (lastError) {
+    console.warn('[nano-banana-pro] uv run failed; falling back to direct Gemini:', lastError instanceof Error ? lastError.message.slice(0, 500) : String(lastError).slice(0, 500));
     return null;
   }
 
