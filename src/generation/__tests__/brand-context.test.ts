@@ -251,3 +251,57 @@ describe('model-selected sections (served from cache, no live call)', () => {
     expect(suffix).toContain('Visual world: warm wood tones');
   });
 });
+
+describe('variant blocks never leak through model selection', () => {
+  it('drops venue imagery blocks the model picked, keeping only the chosen venue', async () => {
+    delete process.env.MARKETING_BRAND_SECTIONS;
+    const dir = workspace(MULTI_BRAND, WOODS_VOICE);
+    const { hashDocument } = await import('../brand-sections');
+    // Exactly what the live model returned: both venues' blocks selected.
+    writeFileSync(
+      join(dir, 'shared-context', '.brand-section-cache.json'),
+      JSON.stringify({
+        [hashDocument(MULTI_BRAND)]: {
+          headings: [
+            '## Shared Visual Character',
+            '## Driftwood Imagery Rules',
+            '## Oakwood Imagery Rules',
+          ],
+          hash: hashDocument(MULTI_BRAND),
+          model: 'test',
+          at: new Date().toISOString(),
+        },
+      }),
+      'utf8',
+    );
+    const oak = await buildBrandStyleSuffixAsync('woods-team', 'Oakwood');
+    expect(oak).toContain('The real Oakwood interior and exterior');
+    expect(oak).toContain('Never show: Lake, dock, boating');
+    // The contradiction this guards against.
+    expect(oak).not.toContain('The real Walled Lake view');
+    expect(oak).not.toContain('Driftwood Imagery Rules');
+    expect(oak).toContain('Shared Visual Character: warm wood tones');
+    process.env.MARKETING_BRAND_SECTIONS = 'off';
+  });
+
+  it('omits venue rules entirely when no variant was chosen', async () => {
+    delete process.env.MARKETING_BRAND_SECTIONS;
+    const dir = workspace(MULTI_BRAND, WOODS_VOICE);
+    const { hashDocument } = await import('../brand-sections');
+    writeFileSync(
+      join(dir, 'shared-context', '.brand-section-cache.json'),
+      JSON.stringify({
+        [hashDocument(MULTI_BRAND)]: {
+          headings: ['## Shared Visual Character', '## Driftwood Imagery Rules', '## Oakwood Imagery Rules'],
+          hash: hashDocument(MULTI_BRAND), model: 'test', at: new Date().toISOString(),
+        },
+      }),
+      'utf8',
+    );
+    const out = await buildBrandStyleSuffixAsync('woods-team');
+    expect(out).not.toContain('Walled Lake');
+    expect(out).not.toContain('Oakwood interior');
+    expect(out).toContain('Shared Visual Character');
+    process.env.MARKETING_BRAND_SECTIONS = 'off';
+  });
+});
