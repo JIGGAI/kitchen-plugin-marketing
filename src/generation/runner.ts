@@ -233,7 +233,7 @@ async function runPromptGeneration(
     // Prepend the brand visual preamble when the caller opted in. The DB
     // record still stores the raw user prompt so it reads cleanly in the
     // media modal — the brand context only augments what the driver sees.
-    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand);
+    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand, teamId);
     const result = request.type === 'video'
       ? await generateVideoFromPrompt(effectivePrompt, outputDir, videoConfig)
       : await generateImageFromPrompt(effectivePrompt, outputDir, request.config);
@@ -363,7 +363,7 @@ async function runGeneration(
 
     // Same brand-context augmentation as the prompt-only path; raw prompt
     // is preserved on the DB record.
-    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand);
+    const effectivePrompt = applyBrandContext(request.prompt, request.includeBrand, teamId);
     const result = request.type === 'image'
       ? await generateImage(sourcePath, effectivePrompt, outputDir, request.config)
       : await generateVideo(sourcePath, effectivePrompt, outputDir, videoConfig);
