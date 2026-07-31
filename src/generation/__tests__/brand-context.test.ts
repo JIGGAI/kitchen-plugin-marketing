@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { buildBrandStyleSuffix, applyBrandContext, brandLabelFrom, buildBrandStyleSuffixAsync, listBrandVariants } from '../brand-context';
+import { buildBrandStyleSuffix, applyBrandContext, brandLabelFrom, buildBrandStyleSuffixAsync, listBrandVariants, composeBrandLabel } from '../brand-context';
 
 // Each case builds a throwaway workspace and points the resolver at it via
 // MARKETING_BRAND_WORKSPACE, so nothing here depends on what's installed on
@@ -303,5 +303,21 @@ describe('variant blocks never leak through model selection', () => {
     expect(out).not.toContain('Oakwood interior');
     expect(out).toContain('Shared Visual Character');
     process.env.MARKETING_BRAND_SECTIONS = 'off';
+  });
+});
+
+describe('composeBrandLabel', () => {
+  it('collapses a variant identical to the book name', () => {
+    // Per-venue books ("# Oakwood Brand Book" + "## Oakwood Imagery Rules")
+    // would otherwise read "Brand style (Oakwood — Oakwood):".
+    expect(composeBrandLabel('Oakwood', 'Oakwood')).toBe('Oakwood');
+    expect(composeBrandLabel('Oakwood', 'oakwood')).toBe('Oakwood');
+  });
+  it('keeps both when they differ', () => {
+    expect(composeBrandLabel('Woods', 'Oakwood')).toBe('Woods — Oakwood');
+  });
+  it('returns the base alone when there is no variant', () => {
+    expect(composeBrandLabel('Hair Mechanix', undefined)).toBe('Hair Mechanix');
+    expect(composeBrandLabel('Hair Mechanix', false)).toBe('Hair Mechanix');
   });
 });
