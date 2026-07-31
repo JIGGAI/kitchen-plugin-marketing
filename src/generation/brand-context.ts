@@ -234,8 +234,14 @@ export function buildBrandStyleSuffix(teamId?: string, variant?: string): string
 function buildFromHeadings(brand: string, headings: string[]): string[] {
   const lines: string[] = [];
   for (const heading of headings) {
-    // `### Show` / `### Avoid` are variant-scoped and handled separately —
-    // their headings repeat per venue so they're ambiguous on their own.
+    // Variant-scoped content is handled by the variant mechanism and must
+    // never come through here. A model asked "which sections matter for
+    // imagery?" reasonably picks every venue's imagery rules — but emitting
+    // them all produces a self-contradicting suffix (forbidding lake imagery
+    // for Oakwood on one line while supplying Driftwood's lake rules on the
+    // next). Skip both the `## <Name> Imagery Rules` blocks and their
+    // repeated `### Show` / `### Avoid` children.
+    if (VARIANT_HEADING.test(heading)) continue;
     if (/^###\s+(Show|Avoid)\s*$/i.test(heading)) continue;
     const bullets = extractBullets(extractSection(brand, heading));
     if (!bullets.length) continue;
