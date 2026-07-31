@@ -2,12 +2,17 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { buildBrandStyleSuffix, applyBrandContext, brandLabelFrom } from '../brand-context';
+import { buildBrandStyleSuffix, applyBrandContext, brandLabelFrom, buildBrandStyleSuffixAsync, listBrandVariants } from '../brand-context';
 
 // Each case builds a throwaway workspace and points the resolver at it via
 // MARKETING_BRAND_WORKSPACE, so nothing here depends on what's installed on
 // the machine running the tests.
 const made: string[] = [];
+
+// Never let the suite make a live model call: these cases exercise the
+// deterministic fallback path. The model-selected path is covered separately
+// via a pre-seeded cache.
+process.env.MARKETING_BRAND_SECTIONS = 'off';
 
 function workspace(brand: string, voice: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'brandctx-'));
@@ -108,21 +113,21 @@ describe('brand-context per-team resolution', () => {
     expect(buildBrandStyleSuffix('missing-team')).toBe('');
   });
 
-  it('leaves the prompt untouched when nothing usable is found', () => {
+  it('leaves the prompt untouched when nothing usable is found', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'brandctx-empty2-'));
     made.push(dir);
     process.env.MARKETING_BRAND_WORKSPACE = dir;
-    expect(applyBrandContext('a photo of a burger', true, 'missing-team')).toBe('a photo of a burger');
+    expect(await applyBrandContext('a photo of a burger', true, 'missing-team')).toBe('a photo of a burger');
   });
 
-  it('leaves the prompt untouched when the caller did not opt in', () => {
+  it('leaves the prompt untouched when the caller did not opt in', async () => {
     workspace(WOODS_BRAND, WOODS_VOICE);
-    expect(applyBrandContext('a photo of a burger', false, 'woods-team')).toBe('a photo of a burger');
+    expect(await applyBrandContext('a photo of a burger', false, 'woods-team')).toBe('a photo of a burger');
   });
 
-  it('puts the user prompt before the style suffix', () => {
+  it('puts the user prompt before the style suffix', async () => {
     workspace(WOODS_BRAND, WOODS_VOICE);
-    const out = applyBrandContext('a photo of a burger', true, 'woods-team');
+    const out = await applyBrandContext('a photo of a burger', true, 'woods-team');
     expect(out.indexOf('a photo of a burger')).toBeLessThan(out.indexOf('Brand style'));
   });
 });
@@ -135,5 +140,114 @@ describe('brandLabelFrom', () => {
 
   it('falls back to the team id when there is no H1', () => {
     expect(brandLabelFrom('no heading here', 'woods-team')).toBe('woods-team');
+  });
+});
+
+// A book covering two venues whose imagery rules directly contradict each
+// other — the reason a single blended suffix isn't good enough.
+const MULTI_BRAND = `# Woods Brand Book
+
+## Shared Visual Character
+- warm wood tones
+
+## Driftwood Imagery Rules
+
+### Show
+- The real Walled Lake view
+
+### Avoid
+- Ocean, beach, tropical, palm-tree, or resort imagery
+
+## Oakwood Imagery Rules
+
+### Show
+- The real Oakwood interior and exterior
+
+### Avoid
+- Lake, dock, boating, beach, or waterfront imagery
+`;
+
+describe('brand variants', () => {
+  it('discovers variants from the document instead of hardcoding them', () => {
+    workspace(MULTI_BRAND, WOODS_VOICE);
+    expect(listBrandVariants('woods-team')).toEqual(['Driftwood', 'Oakwood']);
+  });
+
+  it('reports no variants for a book that does not define any', () => {
+    workspace(HMX_BRAND, HMX_VOICE);
+    expect(listBrandVariants('hmx-marketing-team')).toEqual([]);
+  });
+
+  it('applies only the selected venue rules, never the other venue', () => {
+    workspace(MULTI_BRAND, WOODS_VOICE);
+    const oak = buildBrandStyleSuffix('woods-team', 'Oakwood');
+    expect(oak).toContain('Brand style (Woods — Oakwood):');
+    expect(oak).toContain('The real Oakwood interior and exterior');
+    expect(oak).toContain('Never show: Lake, dock, boating');
+    // The bug this guards: Driftwood's lake-positive rule leaking into Oakwood.
+    expect(oak).not.toContain('The real Walled Lake view');
+  });
+
+  it('keeps the two venues separate in the other direction too', () => {
+    workspace(MULTI_BRAND, WOODS_VOICE);
+    const drift = buildBrandStyleSuffix('woods-team', 'Driftwood');
+    expect(drift).toContain('The real Walled Lake view');
+    expect(drift).not.toContain('The real Oakwood interior');
+  });
+
+  it('ignores a variant the document does not define', () => {
+    workspace(MULTI_BRAND, WOODS_VOICE);
+    const out = buildBrandStyleSuffix('woods-team', 'NotARealVenue');
+    expect(out).toContain('Brand style (Woods):');
+    expect(out).not.toContain('Never show:');
+  });
+
+  it('matches the variant case-insensitively', () => {
+    workspace(MULTI_BRAND, WOODS_VOICE);
+    expect(buildBrandStyleSuffix('woods-team', 'oakwood')).toContain('Woods — Oakwood');
+  });
+});
+
+describe('model-selected sections (served from cache, no live call)', () => {
+  it('uses the cached heading selection and honours document order', async () => {
+    delete process.env.MARKETING_BRAND_SECTIONS; // exercise the selected path
+    const brand = `# Woods Brand Book
+
+## Strategy Notes
+- not relevant to imagery
+
+## Logos and Brand Assets
+- Never redraw, retype, restyle, or AI-recreate a logo
+
+## Do Not Invent
+- Never invent ingredients, sides, garnishes, glassware, or serving pieces
+`;
+    const dir = workspace(brand, WOODS_VOICE);
+    // Pre-seed the cache so resolveSectionSelection returns without any HTTP.
+    const { hashDocument } = await import('../brand-sections');
+    writeFileSync(
+      join(dir, 'shared-context', '.brand-section-cache.json'),
+      JSON.stringify({
+        [hashDocument(brand)]: {
+          headings: ['## Logos and Brand Assets', '## Do Not Invent'],
+          hash: hashDocument(brand),
+          model: 'test',
+          at: new Date().toISOString(),
+        },
+      }),
+      'utf8',
+    );
+    const suffix = await buildBrandStyleSuffixAsync('woods-team');
+    expect(suffix).toContain('Logos and Brand Assets: Never redraw');
+    expect(suffix).toContain('Do Not Invent: Never invent ingredients');
+    // Sections the model did not pick stay out.
+    expect(suffix).not.toContain('not relevant to imagery');
+    process.env.MARKETING_BRAND_SECTIONS = 'off';
+  });
+
+  it('falls back to heuristics when selection is unavailable', async () => {
+    workspace(WOODS_BRAND, WOODS_VOICE);
+    const suffix = await buildBrandStyleSuffixAsync('woods-team');
+    expect(suffix).toContain('Visual world: warm wood tones');
   });
 });
