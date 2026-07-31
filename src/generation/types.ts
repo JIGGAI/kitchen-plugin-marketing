@@ -3,6 +3,8 @@ export interface GenerationRequest {
   type: 'image' | 'video';
   provider?: string;
   includeBrand?: boolean;
+  /** Venue/sub-brand whose imagery rules apply, e.g. 'Oakwood'. */
+  brandVariant?: string;
   config?: {
     duration?: number;
     aspectRatio?: string;

@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { resolveSectionSelection } from './brand-sections';
 
 // Resolve the workspace whose brand docs seed generation.
 //
@@ -57,6 +58,31 @@ const VOICE_WORDS_SECTIONS: SectionPath[] = [
 const PREFERRED_TONE_SECTIONS: SectionPath[] = [
   ['## Preferred tone'],
 ];
+
+// Some brand books cover multiple venues under one workspace, each with its
+// own — and often mutually exclusive — imagery rules. Woods is the case that
+// drove this: Oakwood must avoid lake/waterfront imagery while Driftwood is
+// defined by it, so blending both would be incoherent. Variants are
+// discovered from the document rather than hardcoded, so a book without
+// them (Hair Mechanix) simply reports none and behaves as before.
+const VARIANT_HEADING = /^##\s+(.+?)\s+Imagery Rules\s*$/;
+
+export function listBrandVariants(teamId?: string): string[] {
+  const brand = readSafely(brandPathFor(teamId));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of brand.split('\n')) {
+    const m = line.match(VARIANT_HEADING);
+    if (m) {
+      const name = m[1].trim();
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        out.push(name);
+      }
+    }
+  }
+  return out;
+}
 
 // Kling video API caps the prompt at 2500 chars (HTTP 400 code 1201). Gemini
 // image generation doesn't have a documented hard cap but starts returning
@@ -143,7 +169,7 @@ export function brandLabelFrom(brand: string, teamId?: string): string {
   return teamId || 'Brand';
 }
 
-export function buildBrandStyleSuffix(teamId?: string): string {
+export function buildBrandStyleSuffix(teamId?: string, variant?: string): string {
   const brand = readSafely(brandPathFor(teamId));
   const voice = readSafely(brandVoicePathFor(teamId));
 
@@ -153,15 +179,35 @@ export function buildBrandStyleSuffix(teamId?: string): string {
   const voiceWords = firstBullets(voice, VOICE_WORDS_SECTIONS);
   const preferredTone = firstBullets(voice, PREFERRED_TONE_SECTIONS);
 
+  // Only honour a variant the document actually defines, so a stale or
+  // hand-crafted value can't inject an arbitrary heading lookup.
+  let variantShow: string[] = [];
+  let variantAvoid: string[] = [];
+  const resolvedVariant = variant && listBrandVariants(teamId)
+    .find((v) => v.toLowerCase() === variant.trim().toLowerCase());
+  if (resolvedVariant) {
+    const block = extractSection(brand, `## ${resolvedVariant} Imagery Rules`);
+    variantShow = extractBullets(extractSection(block, '### Show'));
+    variantAvoid = extractBullets(extractSection(block, '### Avoid'));
+  }
+
   // Nothing usable found (missing docs, or a layout none of the candidates
   // match) — return empty so applyBrandContext leaves the prompt untouched
   // rather than appending a bare, meaningless header.
   if (!visualWorld.length && !visualCues.length && !voiceWords.length
-      && !preferredTone.length && !avoidVisually.length) {
+      && !preferredTone.length && !avoidVisually.length
+      && !variantShow.length && !variantAvoid.length) {
     return '';
   }
 
-  const lines: string[] = [`Brand style (${brandLabelFrom(brand, teamId)}):`];
+  const label = resolvedVariant
+    ? `${brandLabelFrom(brand, teamId)} — ${resolvedVariant}`
+    : brandLabelFrom(brand, teamId);
+  const lines: string[] = [`Brand style (${label}):`];
+  // Variant rules lead: they are the most specific guidance available, and
+  // if the suffix hits the char cap the generic lines are the ones to lose.
+  if (variantShow.length) lines.push(`- Show: ${variantShow.join('; ')}.`);
+  if (variantAvoid.length) lines.push(`- Never show: ${variantAvoid.join('; ')}.`);
   if (visualWorld.length) lines.push(`- Visual world: ${visualWorld.join(', ')}.`);
   if (visualCues.length) lines.push(`- Visual cues: ${visualCues.join('; ')}.`);
   if (voiceWords.length || preferredTone.length) {
@@ -181,13 +227,80 @@ export function buildBrandStyleSuffix(teamId?: string): string {
 // FIRST so the generation model sees the concrete goal before the style
 // constraints — model output quality is materially better this way, and any
 // downstream truncation preserves the important part.
-export function applyBrandContext(
+// Compose a suffix from an explicit heading list (the model-selected path).
+// Each selected section contributes `- <Heading>: <its bullets>`, keeping
+// document order so the brand book's own emphasis survives. Sections with no
+// bullets are skipped rather than emitting an empty label.
+function buildFromHeadings(brand: string, headings: string[]): string[] {
+  const lines: string[] = [];
+  for (const heading of headings) {
+    // `### Show` / `### Avoid` are variant-scoped and handled separately —
+    // their headings repeat per venue so they're ambiguous on their own.
+    if (/^###\s+(Show|Avoid)\s*$/i.test(heading)) continue;
+    const bullets = extractBullets(extractSection(brand, heading));
+    if (!bullets.length) continue;
+    const title = heading.replace(/^#+\s*/, '').trim();
+    lines.push(`- ${title}: ${bullets.join('; ')}.`);
+  }
+  return lines;
+}
+
+/**
+ * Model-selected variant of buildBrandStyleSuffix. Falls back to the
+ * heuristic section candidates whenever a selection isn't available, so
+ * generation never depends on the model call succeeding.
+ */
+export async function buildBrandStyleSuffixAsync(
+  teamId?: string,
+  variant?: string,
+): Promise<string> {
+  const workspace = workspaceFor(teamId);
+  const brand = readSafely(brandPathFor(teamId));
+  const voice = readSafely(brandVoicePathFor(teamId));
+  if (!brand && !voice) return '';
+
+  const selection = await resolveSectionSelection(workspace, brand).catch(() => null);
+  if (!selection) return buildBrandStyleSuffix(teamId, variant);
+
+  const resolvedVariant = variant && listBrandVariants(teamId)
+    .find((v) => v.toLowerCase() === variant.trim().toLowerCase());
+
+  const lines: string[] = [];
+  if (resolvedVariant) {
+    const block = extractSection(brand, `## ${resolvedVariant} Imagery Rules`);
+    const show = extractBullets(extractSection(block, '### Show'));
+    const avoid = extractBullets(extractSection(block, '### Avoid'));
+    if (show.length) lines.push(`- Show: ${show.join('; ')}.`);
+    if (avoid.length) lines.push(`- Never show: ${avoid.join('; ')}.`);
+  }
+  lines.push(...buildFromHeadings(brand, selection.headings));
+
+  const voiceWords = firstBullets(voice, VOICE_WORDS_SECTIONS);
+  const preferredTone = firstBullets(voice, PREFERRED_TONE_SECTIONS);
+  if (voiceWords.length || preferredTone.length) {
+    lines.push(`- Mood: ${[...voiceWords, ...preferredTone].join(', ')}.`);
+  }
+
+  if (!lines.length) return '';
+
+  const label = resolvedVariant
+    ? `${brandLabelFrom(brand, teamId)} — ${resolvedVariant}`
+    : brandLabelFrom(brand, teamId);
+  let suffix = [`Brand style (${label}):`, ...lines].join('\n');
+  if (suffix.length > BRAND_SUFFIX_MAX_CHARS) {
+    suffix = suffix.slice(0, BRAND_SUFFIX_MAX_CHARS - 1).trimEnd() + '…';
+  }
+  return suffix;
+}
+
+export async function applyBrandContext(
   prompt: string,
   includeBrand: boolean | undefined,
   teamId?: string,
-): string {
+  variant?: string,
+): Promise<string> {
   if (!includeBrand) return prompt;
-  const suffix = buildBrandStyleSuffix(teamId);
+  const suffix = await buildBrandStyleSuffixAsync(teamId, variant);
   if (!suffix) return prompt;
   return `${prompt}\n\n${suffix}`;
 }

@@ -19,7 +19,7 @@ function findSkillDir(slug: string): string | null {
   return null;
 }
 
-function loadConfigEnv(): Record<string, string> {
+export function loadConfigEnv(): Record<string, string> {
   const envPath = join(homedir(), '.config', 'openclaw', 'env');
   const env: Record<string, string> = {};
   try {
