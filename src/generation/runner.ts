@@ -233,7 +233,9 @@ async function runPromptGeneration(
     // Prepend the brand visual preamble when the caller opted in. The DB
     // record still stores the raw user prompt so it reads cleanly in the
     // media modal — the brand context only augments what the driver sees.
-    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant);
+    // 'fromScratch': there is no source photo, so the brand book's setting
+    // description is the only thing telling the model what our shop is.
+    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant, 'fromScratch', request.type);
     const result = request.type === 'video'
       ? await generateVideoFromPrompt(effectivePrompt, outputDir, videoConfig)
       : await generateImageFromPrompt(effectivePrompt, outputDir, request.config);
@@ -362,8 +364,10 @@ async function runGeneration(
       : request.config;
 
     // Same brand-context augmentation as the prompt-only path; raw prompt
-    // is preserved on the DB record.
-    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant);
+    // is preserved on the DB record. 'fromSource' drops the brand book's
+    // setting description — this path edits a real shop photo, which already
+    // supplies the room, and restating it fights the source image.
+    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant, 'fromSource', request.type);
     const result = request.type === 'image'
       ? await generateImage(sourcePath, effectivePrompt, outputDir, request.config)
       : await generateVideo(sourcePath, effectivePrompt, outputDir, videoConfig);

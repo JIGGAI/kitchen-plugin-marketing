@@ -321,3 +321,180 @@ describe('composeBrandLabel', () => {
     expect(composeBrandLabel('Hair Mechanix', false)).toBe('Hair Mechanix');
   });
 });
+
+// The room the brand occupies is needed on exactly one of the two generation
+// paths. Text-to-image has nothing else to go on; an edit of a real shop photo
+// already has the room in the pixels, and restating it fights the source.
+describe('pinned sections', () => {
+  const BRAND_WITH_SETTING = `# Hair Mechanix Brand Guide
+
+## 17. Imagery rules
+
+### Shop environment
+
+Prose intro that is not a bullet.
+
+- burnt-orange walls and matte-black ceilings
+- black leather barber chairs
+
+### Visual world
+- dark premium base
+
+### Avoid visually
+- pastel palettes
+`;
+
+  it('includes the setting when generating from a prompt alone', () => {
+    workspace(BRAND_WITH_SETTING, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromScratch');
+    expect(out).toContain('- Setting: burnt-orange walls and matte-black ceilings; black leather barber chairs.');
+    expect(out).toContain('dark premium base');
+  });
+
+  it('omits the setting when editing a source photo', () => {
+    workspace(BRAND_WITH_SETTING, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromSource');
+    expect(out).not.toContain('Setting:');
+    expect(out).not.toContain('burnt-orange');
+    expect(out).toContain('dark premium base');
+  });
+
+  it('defaults to including it', () => {
+    workspace(BRAND_WITH_SETTING, HMX_VOICE);
+    expect(buildBrandStyleSuffix()).toContain('Setting:');
+  });
+
+  it('leads with the setting so the char cap trims the tail instead', () => {
+    workspace(BRAND_WITH_SETTING, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromScratch');
+    expect(out.indexOf('- Setting:')).toBeLessThan(out.indexOf('- Visual world:'));
+  });
+
+  it('changes nothing for a book with no pinned sections', () => {
+    workspace(HMX_BRAND, HMX_VOICE);
+    expect(buildBrandStyleSuffix(undefined, undefined, 'fromScratch'))
+      .toBe(buildBrandStyleSuffix(undefined, undefined, 'fromSource'));
+  });
+
+  it('does not let a model section pick reintroduce it on the from-source path', async () => {
+    const dir = workspace(BRAND_WITH_SETTING, HMX_VOICE);
+    const { hashDocument } = await import('../brand-sections');
+    process.env.MARKETING_BRAND_SECTIONS = '';
+    // The parent heading, which is what a model actually returned the first
+    // time this ran — extracting it reaches the setting bullets nested below.
+    writeFileSync(
+      join(dir, 'shared-context', '.brand-section-cache.json'),
+      JSON.stringify({
+        [hashDocument(BRAND_WITH_SETTING)]: {
+          headings: ['## 17. Imagery rules'],
+          hash: hashDocument(BRAND_WITH_SETTING), model: 'test', at: new Date().toISOString(),
+        },
+      }),
+      'utf8',
+    );
+    const out = await buildBrandStyleSuffixAsync(undefined, undefined, 'fromSource');
+    expect(out).not.toContain('burnt-orange');
+    expect(out).toContain('dark premium base');
+    process.env.MARKETING_BRAND_SECTIONS = 'off';
+  });
+});
+
+// The section is found by how the heading reads, not by a fixed path, so a
+// book that calls it something else still works.
+describe('setting section naming', () => {
+  const renamed = (heading: string) => `# Brand
+
+## 17. Imagery rules
+
+${heading}
+- burnt-orange walls
+
+### Visual world
+- dark premium base
+`;
+
+  for (const heading of ['### Shop environment', '### Our Space', '## The Room',
+    '### Store interior', '### Shop floor', '## Venue', '### Décor', '### Setting']) {
+    it(`finds "${heading}"`, () => {
+      workspace(renamed(heading), HMX_VOICE);
+      expect(buildBrandStyleSuffix(undefined, undefined, 'fromScratch'))
+        .toContain('- Setting: burnt-orange walls.');
+    });
+  }
+
+  // Headings that are not about the room. Woods' "## People and Atmosphere"
+  // is casting and conduct rules — reading it as scenery would drop it from
+  // every from-source prompt and quietly lose real constraints.
+  for (const heading of ['## People and Atmosphere', '## Store hours', '## Place-First Hook']) {
+    it(`does not read "${heading}" as the room`, () => {
+      workspace(renamed(heading), HMX_VOICE);
+      expect(buildBrandStyleSuffix(undefined, undefined, 'fromSource')).not.toContain('Setting:');
+      expect(buildBrandStyleSuffix(undefined, undefined, 'fromScratch')).not.toContain('Setting:');
+    });
+  }
+});
+
+// Who is on camera applies to both paths: an edit is usually being asked to
+// change exactly that, so unlike the room it is never dropped.
+describe('pinned casting', () => {
+  const BRAND_WITH_CASTING = `# Hair Mechanix Brand Guide
+
+## 17. Imagery rules
+
+### Casting
+- the barber on camera is always a woman
+- the client is male, any age
+
+### Shop environment
+- burnt-orange walls
+
+### Visual world
+- dark premium base
+`;
+
+  it('carries casting into a from-scratch prompt', () => {
+    workspace(BRAND_WITH_CASTING, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromScratch');
+    expect(out).toContain('- Casting: the barber on camera is always a woman; the client is male, any age.');
+    expect(out).toContain('- Setting: burnt-orange walls.');
+  });
+
+  it('carries casting into a source-photo edit, without the room', () => {
+    workspace(BRAND_WITH_CASTING, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromSource');
+    expect(out).toContain('the barber on camera is always a woman');
+    expect(out).not.toContain('Setting:');
+    expect(out).not.toContain('burnt-orange');
+  });
+
+  it('puts casting ahead of the room so the char cap trims neither first', () => {
+    workspace(BRAND_WITH_CASTING, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromScratch');
+    expect(out.indexOf('- Casting:')).toBeLessThan(out.indexOf('- Setting:'));
+    expect(out.indexOf('- Setting:')).toBeLessThan(out.indexOf('- Visual world:'));
+  });
+
+  it('emits a heading matching two categories only once', () => {
+    workspace(`# B
+
+## 17. Imagery rules
+
+### People and setting
+- one bullet
+
+### Visual world
+- dark premium base
+`, HMX_VOICE);
+    const out = buildBrandStyleSuffix(undefined, undefined, 'fromScratch');
+    expect(out.match(/one bullet/g)).toHaveLength(1);
+  });
+
+  for (const heading of ['### Casting', '## Cast', '### Subjects', '## People and Atmosphere',
+    '### On-camera talent']) {
+    it(`finds casting under "${heading}"`, () => {
+      workspace(`# B\n\n## 17. Imagery rules\n\n${heading}\n- always a woman\n`, HMX_VOICE);
+      expect(buildBrandStyleSuffix(undefined, undefined, 'fromSource'))
+        .toContain('- Casting: always a woman.');
+    });
+  }
+});
