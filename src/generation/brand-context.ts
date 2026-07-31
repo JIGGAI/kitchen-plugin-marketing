@@ -169,6 +169,15 @@ export function brandLabelFrom(brand: string, teamId?: string): string {
   return teamId || 'Brand';
 }
 
+// Compose the suffix label. Once a deployment splits into one book per
+// venue, the book's own name and the variant are the same word — labelling
+// that "Oakwood — Oakwood" reads like a bug in every prompt. Collapse it.
+export function composeBrandLabel(base: string, variant?: string | false | null): string {
+  if (!variant) return base;
+  if (base.trim().toLowerCase() === String(variant).trim().toLowerCase()) return base;
+  return `${base} — ${variant}`;
+}
+
 export function buildBrandStyleSuffix(teamId?: string, variant?: string): string {
   const brand = readSafely(brandPathFor(teamId));
   const voice = readSafely(brandVoicePathFor(teamId));
@@ -200,9 +209,7 @@ export function buildBrandStyleSuffix(teamId?: string, variant?: string): string
     return '';
   }
 
-  const label = resolvedVariant
-    ? `${brandLabelFrom(brand, teamId)} — ${resolvedVariant}`
-    : brandLabelFrom(brand, teamId);
+  const label = composeBrandLabel(brandLabelFrom(brand, teamId), resolvedVariant);
   const lines: string[] = [`Brand style (${label}):`];
   // Variant rules lead: they are the most specific guidance available, and
   // if the suffix hits the char cap the generic lines are the ones to lose.
@@ -289,9 +296,7 @@ export async function buildBrandStyleSuffixAsync(
 
   if (!lines.length) return '';
 
-  const label = resolvedVariant
-    ? `${brandLabelFrom(brand, teamId)} — ${resolvedVariant}`
-    : brandLabelFrom(brand, teamId);
+  const label = composeBrandLabel(brandLabelFrom(brand, teamId), resolvedVariant);
   let suffix = [`Brand style (${label}):`, ...lines].join('\n');
   if (suffix.length > BRAND_SUFFIX_MAX_CHARS) {
     suffix = suffix.slice(0, BRAND_SUFFIX_MAX_CHARS - 1).trimEnd() + '…';
