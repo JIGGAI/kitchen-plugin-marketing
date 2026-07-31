@@ -300,6 +300,33 @@ export function composeBrandLabel(base: string, variant?: string | false | null)
   return `${base} — ${variant}`;
 }
 
+/**
+ * Which venue's rules to apply.
+ *
+ * An explicit request wins, but only if the document actually defines it, so
+ * a stale or hand-crafted value can't inject an arbitrary heading lookup.
+ *
+ * With nothing requested, a book defining exactly ONE variant applies it. That
+ * book has no ambiguity — those are its rules — and demanding the caller name
+ * them means any caller that doesn't silently loses the most specific guidance
+ * it has. That was live: each woods venue has its own book with a single
+ * variant, the weekly pipeline passes --brand-variant, and the dashboard never
+ * did, so every "add image" from the UI dropped "the real Oakwood interior"
+ * along with "never show lake, dock, or waterfront imagery" — the rules that
+ * keep the two venues apart.
+ *
+ * A book covering several venues still requires an explicit choice: picking
+ * one for the caller would be a guess, and the wrong guess is the
+ * contamination this mechanism exists to prevent.
+ */
+function resolveVariant(teamId?: string, variant?: string): string | undefined {
+  const defined = listBrandVariants(teamId);
+  if (variant) {
+    return defined.find((v) => v.toLowerCase() === variant.trim().toLowerCase());
+  }
+  return defined.length === 1 ? defined[0] : undefined;
+}
+
 export function buildBrandStyleSuffix(
   teamId?: string,
   variant?: string,
@@ -324,8 +351,7 @@ export function buildBrandStyleSuffix(
   // hand-crafted value can't inject an arbitrary heading lookup.
   let variantShow: string[] = [];
   let variantAvoid: string[] = [];
-  const resolvedVariant = variant && listBrandVariants(teamId)
-    .find((v) => v.toLowerCase() === variant.trim().toLowerCase());
+  const resolvedVariant = resolveVariant(teamId, variant);
   if (resolvedVariant) {
     const block = extractSection(brand, `## ${resolvedVariant} Imagery Rules`);
     variantShow = extractBullets(extractSection(block, '### Show'));
@@ -409,8 +435,7 @@ export async function buildBrandStyleSuffixAsync(
   const selection = await resolveSectionSelection(workspace, brandRaw).catch(() => null);
   if (!selection) return buildBrandStyleSuffix(teamId, variant, scene, type);
 
-  const resolvedVariant = variant && listBrandVariants(teamId)
-    .find((v) => v.toLowerCase() === variant.trim().toLowerCase());
+  const resolvedVariant = resolveVariant(teamId, variant);
 
   const brand = stripPinnedSections(brandRaw);
   const lines: string[] = [...pinnedLines(brandRaw, scene)];

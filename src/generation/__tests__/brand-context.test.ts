@@ -498,3 +498,78 @@ describe('pinned casting', () => {
     });
   }
 });
+
+// A per-venue book defines exactly one variant. Requiring the caller to name
+// it meant the dashboard — which never did — silently dropped the venue's own
+// Show/Avoid rules from every image request made through the UI.
+describe('sole-variant books', () => {
+  const SINGLE = `# Oakwood Brand Book
+
+## Shared Visual Character
+- warm wood tones
+
+## Oakwood Imagery Rules
+
+### Show
+- The real Oakwood interior
+
+### Avoid
+- Lake, dock, boating, or waterfront imagery
+`;
+
+  it('applies the only variant when none was requested', () => {
+    workspace(SINGLE, WOODS_VOICE);
+    const out = buildBrandStyleSuffix('oakwood-team');
+    expect(out).toContain('- Show: The real Oakwood interior.');
+    expect(out).toContain('- Never show: Lake, dock, boating, or waterfront imagery.');
+  });
+
+  it('collapses the label rather than saying "Oakwood — Oakwood"', () => {
+    workspace(SINGLE, WOODS_VOICE);
+    expect(buildBrandStyleSuffix('oakwood-team')).toContain('Brand style (Oakwood):');
+  });
+
+  it('still honours an explicit variant', () => {
+    workspace(SINGLE, WOODS_VOICE);
+    expect(buildBrandStyleSuffix('oakwood-team', 'Oakwood')).toContain('The real Oakwood interior');
+  });
+
+  it('ignores an explicit variant the book does not define', () => {
+    workspace(SINGLE, WOODS_VOICE);
+    const out = buildBrandStyleSuffix('oakwood-team', 'Driftwood');
+    expect(out).not.toContain('Show:');
+  });
+
+  // Guessing for the caller is exactly the contamination this prevents.
+  it('picks nothing when a book covers several venues', () => {
+    workspace(MULTI_BRAND, WOODS_VOICE);
+    const out = buildBrandStyleSuffix('woods-team');
+    expect(out).not.toContain('Show:');
+    expect(out).not.toContain('Walled Lake');
+    expect(out).not.toContain('Oakwood interior');
+  });
+
+  it('changes nothing for a book with no variants at all', () => {
+    workspace(HMX_BRAND, HMX_VOICE);
+    expect(buildBrandStyleSuffix('hmx-marketing-team')).toContain('Brand style (Hair Mechanix):');
+  });
+
+  it('applies the sole variant on the model-selected path too', async () => {
+    const dir = workspace(SINGLE, WOODS_VOICE);
+    const { hashDocument } = await import('../brand-sections');
+    process.env.MARKETING_BRAND_SECTIONS = '';
+    writeFileSync(
+      join(dir, 'shared-context', '.brand-section-cache.json'),
+      JSON.stringify({
+        [hashDocument(SINGLE)]: {
+          headings: ['## Shared Visual Character'],
+          hash: hashDocument(SINGLE), model: 'test', at: new Date().toISOString(),
+        },
+      }),
+      'utf8',
+    );
+    const out = await buildBrandStyleSuffixAsync('oakwood-team');
+    expect(out).toContain('The real Oakwood interior');
+    process.env.MARKETING_BRAND_SECTIONS = 'off';
+  });
+});
