@@ -6,11 +6,11 @@ import { describe, it, expect } from 'vitest';
 const PROVENANCE = new Set(['derived','ai-generated','text-to-image','text-to-video',
   'image-to-video','video','image','pending-save','human','ai']);
 
-function pick(libraryTags: string[][], prompt: string): string[] {
+function pick(libraryTags: string[][], prompt: string, scopeTag = 'oakwood'): string[] {
   const vocab = new Set<string>();
   for (const row of libraryTags) for (const raw of row) {
     const t = String(raw).toLowerCase();
-    if (!t || PROVENANCE.has(t) || t.includes(':')) continue;
+    if (!t || PROVENANCE.has(t) || t.includes(':') || t === scopeTag) continue;
     vocab.add(t);
   }
   if (!vocab.size) return [];
@@ -55,6 +55,12 @@ describe('content tags from a generation prompt', () => {
 
   it('returns nothing for a library with no content tags yet', () => {
     expect(pick([['ai-generated','pending-save']], 'plates and televisions')).toEqual([]);
+  });
+
+  it('never tags with the venue name — that is scoping, not content', () => {
+    // Every prompt says "Oakwood Bar & Grill", so without this an asset whose
+    // prompt matches nothing else would carry only the venue name.
+    expect(pick(LIB, 'Realistic photo of Oakwood Bar and Grill in Dearborn')).not.toContain('oakwood');
   });
 
   it('matches hyphen pieces the way the base-photo scorer does', () => {
