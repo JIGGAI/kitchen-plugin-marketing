@@ -124,6 +124,7 @@ const PROVENANCE_TAGS = new Set([
 function contentTagsFromPrompt(teamId: string, prompt: string): string[] {
   if (!prompt) return [];
   try {
+    const scopeTag = teamId.replace(/-team$/, '').toLowerCase();
     const { db } = initializeDatabase(teamId);
     const rows = db.select({ tags: schema.media.tags }).from(schema.media)
       .where(eq(schema.media.teamId, teamId)).all();
@@ -136,6 +137,11 @@ function contentTagsFromPrompt(teamId: string, prompt: string): string[] {
         const tag = String(raw).toLowerCase();
         if (!tag || PROVENANCE_TAGS.has(tag)) continue;
         if (tag.includes(':')) continue;            // source:gemini, source-media:<id>
+        // The venue tag scopes the library; it is not content. Every prompt
+        // names the venue ("Oakwood Bar & Grill"), so leaving it in tags every
+        // generated asset with something the team already implies — and an
+        // asset whose prompt matches nothing else carries only that.
+        if (tag === scopeTag) continue;
         vocab.add(tag);
       }
     }
