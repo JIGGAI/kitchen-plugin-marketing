@@ -100,6 +100,61 @@ async function extractVideoThumbnail(videoPath: string, outputDir: string): Prom
   return existsSync(thumbPath) ? thumbPath : '';
 }
 
+// Provenance tags describe how an asset was made. They are not content, and
+// must never be treated as vocabulary.
+const PROVENANCE_TAGS = new Set([
+  'derived', 'ai-generated', 'text-to-image', 'text-to-video', 'image-to-video',
+  'video', 'image', 'pending-save', 'human', 'ai',
+]);
+
+/**
+ * Content tags for a generated asset, taken from the prompt it was made from.
+ *
+ * Generated media used to carry only provenance — ai-generated, derived,
+ * source:gemini — so nothing in the library could be found by what it shows.
+ * The prompt already describes the picture, so no vision call is needed.
+ *
+ * The vocabulary is the team's OWN existing tags rather than a fixed list:
+ * whatever words the base photos are tagged with, generated images are tagged
+ * from the same set. That keeps the two consistent, needs no per-client
+ * configuration, and degrades to nothing on a library that has no tags yet.
+ * It also filters prompt boilerplate for free — words like "photo" or "room"
+ * are not tags, so they cannot be picked up.
+ */
+function contentTagsFromPrompt(teamId: string, prompt: string): string[] {
+  if (!prompt) return [];
+  try {
+    const { db } = initializeDatabase(teamId);
+    const rows = db.select({ tags: schema.media.tags }).from(schema.media)
+      .where(eq(schema.media.teamId, teamId)).all();
+    const vocab = new Set<string>();
+    for (const row of rows) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(row.tags || '[]'); } catch { continue; }
+      if (!Array.isArray(parsed)) continue;
+      for (const raw of parsed) {
+        const tag = String(raw).toLowerCase();
+        if (!tag || PROVENANCE_TAGS.has(tag)) continue;
+        if (tag.includes(':')) continue;            // source:gemini, source-media:<id>
+        vocab.add(tag);
+      }
+    }
+    if (!vocab.size) return [];
+    const tokens = new Set(String(prompt).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3));
+    const hits: string[] = [];
+    for (const tag of vocab) {
+      // Whole tag, or any hyphen-separated piece — matching how the base-photo
+      // scorer reads tags, so both sides agree on what counts as a match.
+      if (tokens.has(tag) || tag.split('-').some((piece) => piece.length >= 3 && tokens.has(piece))) {
+        hits.push(tag);
+      }
+    }
+    return hits.sort().slice(0, 8);
+  } catch {
+    return [];   // tagging is a nicety; never fail a generation over it
+  }
+}
+
 function jobToResponse(row: schema.GenerationJob): GenerationJobResponse {
   return {
     id: row.id,
@@ -280,6 +335,7 @@ async function runPromptGeneration(
         'text-to-video',
         `source:${request.provider || 'klingai'}`,
         'pending-save',
+        ...contentTagsFromPrompt(teamId, request.prompt),
       ]);
     } else {
       const quality = getCompressionQuality(teamId);
@@ -296,6 +352,7 @@ async function runPromptGeneration(
         'text-to-image',
         `source:${request.provider || 'gemini'}`,
         'pending-save',
+        ...contentTagsFromPrompt(teamId, request.prompt),
       ]);
     }
 
@@ -446,6 +503,7 @@ async function runGeneration(
       `source:${request.provider || (request.type === 'image' ? 'gemini' : 'klingai')}`,
       'pending-save',
       `source-media:${sourceMediaId}`,
+      ...contentTagsFromPrompt(teamId, request.prompt),
     ]);
 
     db.insert(schema.media).values({
