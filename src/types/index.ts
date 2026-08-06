@@ -30,6 +30,21 @@ export interface PostResponse {
   createdAt: string;
   updatedAt: string;
   createdBy: string;
+  /**
+   * External publish records — the evidence a post actually reached Postiz.
+   * A `scheduled` status is only a local claim; a push can fail and leave the
+   * status behind. Consumers that space posts apart use this to tell an
+   * approved-and-booked post from one that merely says `scheduled`.
+   * Present (possibly empty) on list responses; omitted by callers that don't
+   * load it.
+   */
+  publishes?: Array<{
+    platform: string;
+    externalId: string;
+    integrationId: string;
+    publishedAt: string | null;
+    syncedAt: string | null;
+  }>;
   metrics?: {
     [platform: string]: {
       impressions: number;

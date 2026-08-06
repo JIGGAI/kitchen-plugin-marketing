@@ -1,4 +1,4 @@
-import { and, desc, eq, like, notLike, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, like, notLike, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, renameSync } from 'fs';
 import { join, extname } from 'path';
@@ -399,6 +399,34 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         .limit(limit)
         .offset(offset);
 
+      // External publish records for this page, in ONE query rather than per
+      // post. A local status of `scheduled` is a claim; these rows are the
+      // evidence that something actually reached Postiz. Consumers that space
+      // posts apart need to tell an approved-and-booked post from one that only
+      // says `scheduled` locally — a push can fail and leave the status behind.
+      const pageIds = posts.map((p) => p.id);
+      const publishesByPost = new Map<string, Array<{ platform: string; externalId: string; integrationId: string; publishedAt: string | null; syncedAt: string | null }>>();
+      if (pageIds.length) {
+        const publishRows = await db
+          .select()
+          .from(schema.postPlatformPublishes)
+          .where(and(
+            eq(schema.postPlatformPublishes.teamId, teamId),
+            inArray(schema.postPlatformPublishes.postId, pageIds),
+          ));
+        for (const row of publishRows) {
+          const list = publishesByPost.get(row.postId) || [];
+          list.push({
+            platform: row.platform,
+            externalId: row.externalId,
+            integrationId: row.integrationId,
+            publishedAt: row.publishedAt,
+            syncedAt: row.syncedAt,
+          });
+          publishesByPost.set(row.postId, list);
+        }
+      }
+
       const transformed: PostResponse[] = posts.map((post) => ({
         id: post.id,
         content: post.content,
@@ -412,6 +440,9 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         createdAt: post.createdAt,
         updatedAt: post.updatedAt,
         createdBy: post.createdBy,
+        // Always an array (never undefined) so a consumer can distinguish
+        // "nothing is booked" from "this build doesn't report bookings".
+        publishes: publishesByPost.get(post.id) || [],
       }));
 
       const payload: PaginatedResponse<PostResponse> = {
