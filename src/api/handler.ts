@@ -9,6 +9,7 @@ import * as schema from '../db/schema';
 import { createAllDrivers, createDriver, getPlatforms, type BackendSources, type PostContent } from '../drivers';
 import { getPostizIntegrations, postizDeletePost, postizListPosts } from '../drivers/postiz-backend';
 import { shouldCascadeToPostiz } from './postiz-cascade-policy';
+import { buildAuditRow, diffFields, parseActor, recordAudit } from './post-audit';
 import { selectNextBasePhotos, getRotationStatus } from './base-photo-rotation';
 import { mediaResponseFields } from './media-response';
 import { startGenerationJob, startPromptGenerationJob, getJob } from '../generation/runner';
@@ -458,6 +459,48 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
     }
   }
 
+  // ---- GET /audit ----
+  // Who changed what, newest first. `entityId` narrows to one post's history
+  // ("what happened to this post?"); `since`/`until` bound a window ("what
+  // changed while I was away?") — the two questions the 2026-07-23 and
+  // 2026-08-05 incidents each started from.
+  if (req.path === '/audit' && req.method === 'GET') {
+    try {
+      const { sqlite } = initializeDatabase(teamId);
+      const { limit, offset } = parsePagination(req.query);
+      const where: string[] = ['team_id = ?'];
+      const args: unknown[] = [teamId];
+      if (req.query.entityId) { where.push('entity_id = ?'); args.push(String(req.query.entityId)); }
+      if (req.query.entity) { where.push('entity = ?'); args.push(String(req.query.entity)); }
+      if (req.query.action) { where.push('action = ?'); args.push(String(req.query.action)); }
+      if (req.query.actorId) { where.push('actor_id = ?'); args.push(String(req.query.actorId)); }
+      if (req.query.since) { where.push('at >= ?'); args.push(String(req.query.since)); }
+      if (req.query.until) { where.push('at <= ?'); args.push(String(req.query.until)); }
+      const clause = where.join(' AND ');
+
+      const total = (sqlite.prepare(`SELECT count(*) AS n FROM post_audit WHERE ${clause}`).get(...args) as { n: number }).n;
+      const rows = sqlite.prepare(
+        `SELECT id, entity, entity_id AS entityId, action, actor_id AS actorId,
+                actor_email AS actorEmail, changes, at
+           FROM post_audit WHERE ${clause}
+          ORDER BY at DESC, rowid DESC LIMIT ? OFFSET ?`,
+      ).all(...args, limit, offset) as Array<Record<string, unknown>>;
+
+      return {
+        status: 200,
+        data: {
+          data: rows.map((r) => ({ ...r, changes: r.changes ? JSON.parse(String(r.changes)) : null })),
+          total,
+          offset,
+          limit,
+          hasMore: offset + limit < total,
+        },
+      };
+    } catch (error: any) {
+      return apiError(500, 'DATABASE_ERROR', error?.message || 'Failed to read audit log');
+    }
+  }
+
   // ---- POST /posts/reconcile (Postiz → local sync) ----
   // Compares local post_platform_publishes audit with Postiz's current state.
   // Any local external_id Postiz no longer has is removed from the audit, and
@@ -582,7 +625,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         return apiError(400, 'VALIDATION_ERROR', 'Content and platforms are required');
       }
 
-      const { db } = initializeDatabase(teamId);
+      const { db, sqlite } = initializeDatabase(teamId);
       const now = new Date().toISOString();
 
       const newPost = {
@@ -602,6 +645,22 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       };
 
       await db.insert(schema.posts).values(newPost);
+      // Records the fields that define the post at birth — notably `status`,
+      // so a post that arrives already `scheduled` (an automation publishing
+      // without approval) is visible as such from its first row.
+      recordAudit(sqlite, buildAuditRow({
+        teamId,
+        entity: 'post',
+        entityId: newPost.id,
+        action: 'create',
+        actor: parseActor(userId),
+        changes: diffFields(null, {
+          status: newPost.status,
+          platforms: JSON.parse(newPost.platforms),
+          scheduledAt: newPost.scheduledAt,
+        }),
+        at: now,
+      }));
 
       const response: PostResponse = {
         id: newPost.id,
@@ -795,6 +854,27 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         postizCascade.push({ platform: '', external_id: '', success: false, error: cascadeErr?.message || String(cascadeErr) });
       }
 
+      // Written BEFORE the row goes, and deliberately not wrapped in a
+      // try/catch: a post must never be deleted without its audit row. This is
+      // the exact case that left 22 deletions unattributable on 2026-07-23.
+      // The deleted row's identifying fields are kept in `changes` because
+      // after this statement there is nothing left to join back to.
+      {
+        const { sqlite: auditSqlite } = initializeDatabase(teamId);
+        recordAudit(auditSqlite, buildAuditRow({
+          teamId,
+          entity: 'post',
+          entityId: singlePostMatch[1],
+          action: 'delete',
+          actor: parseActor(getUserId(req)),
+          changes: {
+            status: [post.status, null],
+            scheduledAt: [post.scheduledAt || null, null],
+            platforms: [JSON.parse(post.platforms || '[]'), null],
+          },
+        }));
+      }
+
       await db.delete(schema.postPlatformPublishes).where(and(
         eq(schema.postPlatformPublishes.postId, singlePostMatch[1]),
         eq(schema.postPlatformPublishes.teamId, teamId),
@@ -851,6 +931,40 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
       if ((body as any).mediaIds !== undefined) updates.mediaIds = JSON.stringify((body as any).mediaIds);
       await db.update(schema.posts).set(updates).where(eq(schema.posts.id, singlePostMatch[1]));
+
+      // The write point that matters most. A status flip (draft→scheduled) is
+      // how both the 2026-07-23 and 2026-08-05 incidents actually happened, and
+      // neither left a trace. Compared field-by-field so a no-op PATCH — the
+      // media cleanup re-touching old rows — records nothing.
+      {
+        const { sqlite: auditSqlite } = initializeDatabase(teamId);
+        const beforeFields = {
+          status: post.status,
+          scheduledAt: post.scheduledAt || null,
+          content: post.content,
+          platforms: JSON.parse(post.platforms || '[]'),
+          tags: JSON.parse(post.tags || '[]'),
+          mediaIds: JSON.parse(post.mediaIds || '[]'),
+        };
+        const afterFields: Record<string, unknown> = {};
+        if (body.status !== undefined) afterFields.status = body.status;
+        if (body.scheduledAt !== undefined) afterFields.scheduledAt = body.scheduledAt || null;
+        if (body.content !== undefined) afterFields.content = body.content;
+        if (body.platforms !== undefined) afterFields.platforms = body.platforms;
+        if (body.tags !== undefined) afterFields.tags = body.tags;
+        if ((body as any).mediaIds !== undefined) afterFields.mediaIds = (body as any).mediaIds;
+        const changes = diffFields(beforeFields, afterFields);
+        if (Object.keys(changes).length) {
+          recordAudit(auditSqlite, buildAuditRow({
+            teamId,
+            entity: 'post',
+            entityId: singlePostMatch[1],
+            action: 'update',
+            actor: parseActor(getUserId(req)),
+            changes,
+          }));
+        }
+      }
 
       // Cascade to Postiz when publish-relevant fields changed and the post
       // already has external publishes. Delete the old scheduled posts on
@@ -1492,6 +1606,18 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
             if (!item) { results.push({ id, ok: false, error: 'not found' }); continue; }
             const fp = join(MEDIA_DIR, teamId, item.filename);
             try { unlinkSync(fp); } catch { /* ok if already gone */ }
+            // Bulk deletes are the ones most worth attributing — a single
+            // action removing many rows is exactly what made 2026-07-23 hard
+            // to reconstruct.
+            const { sqlite: auditSqlite } = initializeDatabase(teamId);
+            recordAudit(auditSqlite, buildAuditRow({
+              teamId,
+              entity: 'media',
+              entityId: id,
+              action: 'delete',
+              actor: parseActor(getUserId(req)),
+              changes: { filename: [item.filename, null] },
+            }));
             await db.delete(schema.media).where(eq(schema.media.id, id));
             results.push({ id, ok: true });
           } catch (error: any) {
@@ -1556,6 +1682,21 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       // Remove file from disk
       const fp = join(MEDIA_DIR, teamId, item.filename);
       try { unlinkSync(fp); } catch { /* ok if already gone */ }
+
+      // Media deletes are destructive — the file is already gone from disk by
+      // this point — so they are attributed for the same reason post deletes
+      // are.
+      {
+        const { sqlite: auditSqlite } = initializeDatabase(teamId);
+        recordAudit(auditSqlite, buildAuditRow({
+          teamId,
+          entity: 'media',
+          entityId: mediaIdMatch[1],
+          action: 'delete',
+          actor: parseActor(getUserId(req)),
+          changes: { filename: [item.filename, null] },
+        }));
+      }
 
       await db.delete(schema.media).where(eq(schema.media.id, mediaIdMatch[1]));
       return { status: 200, data: { deleted: true, id: mediaIdMatch[1] } };

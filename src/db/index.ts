@@ -64,7 +64,11 @@ export function initializeDatabase(teamId: string) {
     migrate(db, { migrationsFolder: migrationsDir });
   } catch (error: any) {
     // Fallback: run SQL directly if drizzle migrator fails (missing journal etc.)
-    const migrationFiles = ['0001_initial.sql', '0002_generation_jobs.sql', '0003_post_platform_publishes.sql', '0004_media_prompt.sql', '0005_base_photo_usage.sql'];
+    // Every migration must be listed here, not just in the drizzle journal —
+    // the journal stops at 0001, so this list is what actually creates tables
+    // on a new team DB. Omitting one is not a silent no-op: post_audit missing
+    // makes recordAudit throw, which fails the mutation it was auditing.
+    const migrationFiles = ['0001_initial.sql', '0002_generation_jobs.sql', '0003_post_platform_publishes.sql', '0004_media_prompt.sql', '0005_base_photo_usage.sql', '0006_post_audit.sql'];
     for (const migrationFile of migrationFiles) {
       try {
         const sqlPath = join(PLUGIN_ROOT, 'db', 'migrations', migrationFile);

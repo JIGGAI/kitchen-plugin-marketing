@@ -128,6 +128,32 @@ export const postPlatformPublishes = sqliteTable('post_platform_publishes', {
 });
 
 export type PostPlatformPublish = typeof postPlatformPublishes.$inferSelect;
+
+/**
+ * Who changed a post or media item, and what changed.
+ *
+ * `changes` holds only the fields that differed — {"status":["draft","scheduled"]}
+ * — not a full row snapshot; the hourly/daily DB backups already cover recovery.
+ * This table answers "who and what", which backups cannot.
+ */
+export const postAudit = sqliteTable('post_audit', {
+  id: text('id').primaryKey(),
+  teamId: text('team_id').notNull(),
+  /** 'post' | 'media' */
+  entity: text('entity').notNull(),
+  entityId: text('entity_id').notNull(),
+  /** 'create' | 'update' | 'delete' */
+  action: text('action').notNull(),
+  /** From the x-user-id header. `user:<id>` for a person, a label like
+   *  `workflow:weekly-plan-sync` for automation, `system` when unattributed. */
+  actorId: text('actor_id'),
+  actorEmail: text('actor_email'),
+  changes: text('changes'),
+  at: text('at').notNull(),
+});
+
+export type PostAudit = typeof postAudit.$inferSelect;
+export type NewPostAudit = typeof postAudit.$inferInsert;
 export type NewPostPlatformPublish = typeof postPlatformPublishes.$inferInsert;
 
 // Webhooks table
