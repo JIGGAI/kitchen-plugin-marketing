@@ -326,6 +326,7 @@
     const [modalMediaUrl, setModalMediaUrl] = useState('');
     const [modalShowMedia, setModalShowMedia] = useState(false);
     const [modalUploading, setModalUploading] = useState(false);
+    const [modalUploadCropPreset, setModalUploadCropPreset] = useState('square');
     const [modalMediaLibrary, setModalMediaLibrary] = useState<any[]>([]);
     const [modalSelectedMediaIds, setModalSelectedMediaIds] = useState<string[]>([]);
     const modalFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -407,7 +408,7 @@
           const up = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type }),
+            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type, cropPreset: modalUploadCropPreset }),
           });
           if (!up.ok) {
             const err = await up.json().catch(() => ({}));
@@ -425,7 +426,7 @@
         setModalUploading(false);
         if (modalFileInputRef.current) modalFileInputRef.current.value = '';
       }
-    }, [teamId, loadMedia]);
+    }, [apiBase, teamId, loadMedia, modalUploadCropPreset]);
 
     const toggleModalMedia = (id: string) => {
       setModalSelectedMediaIds((prev: string[]) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -1245,6 +1246,19 @@
                     onClick: () => modalFileInputRef.current?.click(),
                     disabled: modalUploading,
                   }, modalUploading ? '⏳ Uploading…' : '📁 Upload'),
+                  h('select', {
+                    value: modalUploadCropPreset,
+                    onChange: (e: any) => setModalUploadCropPreset(e.target.value),
+                    title: 'Upload crop',
+                    disabled: modalUploading,
+                    style: { ...s.input, width: '130px', padding: '0.35rem 0.5rem', fontSize: '0.75rem' },
+                  },
+                    h('option', { value: 'square' }, 'Square 1:1'),
+                    h('option', { value: 'portrait' }, 'Portrait 4:5'),
+                    h('option', { value: 'landscape' }, 'Wide 1.91:1'),
+                    h('option', { value: 'story' }, 'Story 9:16'),
+                    h('option', { value: 'original' }, 'Original'),
+                  ),
                   h('button', {
                     type: 'button',
                     style: { ...s.btnGhost, padding: '0.35rem 0.6rem', fontSize: '0.75rem' },
