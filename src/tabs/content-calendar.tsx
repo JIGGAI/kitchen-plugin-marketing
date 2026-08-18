@@ -2,6 +2,8 @@
  * Content Calendar Tab — week/month view with post cards, create-post modal, preview/copy/delete
  * Self-registering browser bundle
  */
+import { useUploadCropper } from './upload-cropper';
+
 (function () {
   const R = (window as any).React;
   const RD = (window as any).ReactDOM;
@@ -392,41 +394,27 @@
       } catch { /* */ }
     }, [teamId]);
 
+    const modalUploadCropper = useUploadCropper({
+      React: R,
+      h,
+      apiBase,
+      teamId,
+      cropPreset: modalUploadCropPreset,
+      setUploading: setModalUploading,
+      setError: setModalError,
+      onUploaded: (item: any) => {
+        if (item?.id) setModalSelectedMediaIds((prev: string[]) => (prev.includes(item.id) ? prev : [...prev, item.id]));
+      },
+      afterUpload: loadMedia,
+      fileInputRef: modalFileInputRef,
+      buttonStyle: { ...s.btnGhost, padding: '0.4rem 0.65rem', fontSize: '0.75rem' },
+      inputStyle: s.input,
+    });
+
     const handleModalFileUpload = useCallback(async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      setModalUploading(true);
-      setModalError(null);
-      try {
-        for (const file of Array.from(files)) {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-
-          const up = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type, cropPreset: modalUploadCropPreset }),
-          });
-          if (!up.ok) {
-            const err = await up.json().catch(() => ({}));
-            throw new Error(err?.message || `Upload failed (${up.status})`);
-          }
-          const item = await up.json().catch(() => null);
-          if (item?.id) {
-            setModalSelectedMediaIds((prev: string[]) => (prev.includes(item.id) ? prev : [...prev, item.id]));
-          }
-        }
-        await loadMedia();
-      } catch (e: any) {
-        setModalError(e?.message || 'Upload failed');
-      } finally {
-        setModalUploading(false);
-        if (modalFileInputRef.current) modalFileInputRef.current.value = '';
-      }
-    }, [apiBase, teamId, loadMedia, modalUploadCropPreset]);
+      await modalUploadCropper.start(files);
+    }, [modalUploadCropper]);
 
     const toggleModalMedia = (id: string) => {
       setModalSelectedMediaIds((prev: string[]) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -1657,6 +1645,7 @@
       ),
 
       CreateModal(),
+      modalUploadCropper.modal,
     );
   }
 

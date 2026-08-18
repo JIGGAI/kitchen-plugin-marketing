@@ -1,6 +1,8 @@
 /**
  * Content Library Tab — compose, save drafts, publish via driver system
  */
+import { useUploadCropper } from './upload-cropper';
+
 (function () {
   const R = (window as any).React;
   if (!R) return;
@@ -308,40 +310,28 @@
       } catch { /* ignore */ }
     }, [apiBase, teamId, mediaPage]);
 
+    const uploadCropper = useUploadCropper({
+      React: R,
+      h,
+      apiBase,
+      teamId,
+      cropPreset: uploadCropPreset,
+      setUploading,
+      setError,
+      onUploaded: (item: any) => setSelectedMediaIds((prev) => [...prev, item.id]),
+      afterUpload: async () => {
+        await loadMedia();
+        showSuccess('Uploaded media');
+      },
+      fileInputRef,
+      buttonStyle: { ...t.btnGhost, padding: '0.45rem 0.7rem', fontSize: '0.8rem' },
+      inputStyle: t.input,
+    });
+
     const handleFileUpload = useCallback(async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      setUploading(true);
-      setError(null);
-      try {
-        for (const file of Array.from(files)) {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type, cropPreset: uploadCropPreset }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.message || `Upload failed (${res.status})`);
-          }
-          const item = await res.json();
-          // Auto-select newly uploaded item
-          setSelectedMediaIds((prev) => [...prev, item.id]);
-        }
-        await loadMedia();
-        showSuccess(`Uploaded ${files.length} file${files.length > 1 ? 's' : ''}`);
-      } catch (e: any) {
-        setError(e?.message || 'Upload failed');
-      } finally {
-        setUploading(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    }, [apiBase, teamId, loadMedia, uploadCropPreset]);
+      await uploadCropper.start(files);
+    }, [uploadCropper]);
 
     const deleteMedia = useCallback(async (id: string) => {
       try {
@@ -1809,6 +1799,7 @@
             ),
         ),
       ),
+      uploadCropper.modal,
     );
   }
 
