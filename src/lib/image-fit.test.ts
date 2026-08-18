@@ -4,7 +4,18 @@ import { promisify } from 'util';
 import { mkdtempSync, rmSync, existsSync, statSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { needsCompression, compressUnderCap, webSafeMediaUrl, webDerivativePath, POSTIZ_MAX_BYTES, TARGET_BYTES } from './image-fit';
+import {
+  needsCompression,
+  compressUnderCap,
+  webSafeMediaUrl,
+  webDerivativePath,
+  optimizeImageForSocial,
+  imageDimensions,
+  POSTIZ_MAX_BYTES,
+  SOCIAL_IMAGE_MAX_BYTES,
+  SOCIAL_IMAGE_MAX_DIM,
+  TARGET_BYTES,
+} from './image-fit';
 
 const pExecFile = promisify(execFile);
 
@@ -19,7 +30,8 @@ describe('needsCompression', () => {
     expect(needsCompression(500, 1000)).toBe(false);
   });
   it('TARGET_BYTES sits below the hard cap', () => {
-    expect(TARGET_BYTES).toBeLessThan(POSTIZ_MAX_BYTES);
+    expect(TARGET_BYTES).toBeLessThan(SOCIAL_IMAGE_MAX_BYTES);
+    expect(SOCIAL_IMAGE_MAX_BYTES).toBeLessThan(POSTIZ_MAX_BYTES);
   });
 });
 
@@ -44,6 +56,33 @@ describe('compressUnderCap', () => {
     const { stdout } = await pExecFile('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', dest]);
     const dims = [...stdout.matchAll(/pixel(?:Width|Height): (\d+)/g)].map((m) => Number(m[1]));
     expect(Math.max(...dims)).toBeLessThanOrEqual(2560);
+  });
+});
+
+describe('optimizeImageForSocial', () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'imgfit-upload-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('downscales large uploads even when they are already under 10MB', async () => {
+    const src = join(dir, 'wide.jpg');
+    const dest = join(dir, 'wide-fit.jpg');
+    await pExecFile('ffmpeg', ['-f', 'lavfi', '-i', 'testsrc2=s=3200x1800', '-frames:v', '1', '-q:v', '3', '-y', src]);
+    const res = await optimizeImageForSocial(src, dest);
+    expect(res.optimized).toBe(true);
+    expect(res.bytes).toBeLessThanOrEqual(SOCIAL_IMAGE_MAX_BYTES);
+    expect(Math.max(res.width, res.height)).toBeLessThanOrEqual(SOCIAL_IMAGE_MAX_DIM);
+  });
+
+  it('applies crop presets before resizing', async () => {
+    const src = join(dir, 'portrait-source.jpg');
+    const dest = join(dir, 'square-fit.jpg');
+    await pExecFile('ffmpeg', ['-f', 'lavfi', '-i', 'testsrc2=s=2400x1600', '-frames:v', '1', '-q:v', '3', '-y', src]);
+    await optimizeImageForSocial(src, dest, { cropPreset: 'square' });
+    const dims = await imageDimensions(dest);
+    expect(Math.abs(dims.width - dims.height)).toBeLessThanOrEqual(1);
   });
 });
 
@@ -83,5 +122,18 @@ describe('webSafeMediaUrl', () => {
     expect(url).toBe('/api/plugins/marketing/media/big/file?team=T&variant=web');
     expect(existsSync(webDerivativePath('T', 'big', base))).toBe(true);
     expect(readFileSync(fp)).toEqual(before); // original byte-for-byte intact
+  });
+
+  it('creates a web derivative for files with platform-unsafe dimensions', async () => {
+    const fp = join(mediaDir, 'huge-dims.jpg');
+    await pExecFile('ffmpeg', ['-f', 'lavfi', '-i', 'testsrc2=s=3000x1200', '-frames:v', '1', '-q:v', '4', '-y', fp]);
+    const url = await webSafeMediaUrl(
+      'T',
+      { id: 'huge-dims', filename: 'huge-dims.jpg', url: '/api/plugins/marketing/media/huge-dims/file?team=T' },
+      { baseDir: base },
+    );
+    expect(url).toBe('/api/plugins/marketing/media/huge-dims/file?team=T&variant=web');
+    const dims = await imageDimensions(webDerivativePath('T', 'huge-dims', base));
+    expect(Math.max(dims.width, dims.height)).toBeLessThanOrEqual(SOCIAL_IMAGE_MAX_DIM);
   });
 });

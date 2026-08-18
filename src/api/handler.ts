@@ -16,7 +16,7 @@ import { startGenerationJob, startPromptGenerationJob, getJob } from '../generat
 import type { GenerationRequest } from '../generation/types';
 import { syncPostMetrics, syncPostsBatch } from '../analytics/sync';
 import { ensureThumb, thumbPath, thumbStat } from '../lib/thumbnails';
-import { needsCompression, compressUnderCap, webSafeMediaUrl, webDerivativePath, MediaTooLargeError, POSTIZ_MAX_BYTES } from '../lib/image-fit';
+import { normalizeCropPreset, optimizeImageForSocial, webSafeMediaUrl, webDerivativePath, MediaTooLargeError } from '../lib/image-fit';
 import type {
   ApiError,
   PaginatedResponse,
@@ -1185,6 +1185,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         mimeType?: string;
         alt?: string;
         tags?: string[];
+        cropPreset?: string;
       };
 
       if (!body?.data && !body?.sourceUrl) {
@@ -1231,14 +1232,15 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
       const filePath = join(dir, storedFilename);
       writeFileSync(filePath, buf);
 
-      // Layer 1 — keep oversized images under Postiz's 10MB cap. Convert to a
-      // compressed JPEG in place; if it can't get under the cap, keep the
-      // original and let the publish-time backstop handle it.
-      if (detectedMime.startsWith('image/') && needsCompression(buf.length)) {
+      // Layer 1 — normalize uploaded still images into social-safe JPEGs.
+      // This catches big DSLR/Photoshop uploads before they can fail in Postiz
+      // or Instagram, and also supports default platform crops.
+      if (detectedMime.startsWith('image/')) {
         const fitTmp = join(dir, `${id}.fit.jpg`);
+        const cropPreset = normalizeCropPreset(body.cropPreset);
         try {
-          const res = await compressUnderCap(filePath, fitTmp);
-          if (res.bytes <= POSTIZ_MAX_BYTES && res.bytes < buf.length) {
+          const res = await optimizeImageForSocial(filePath, fitTmp, { cropPreset });
+          if (res.optimized) {
             const jpgName = `${id}.jpg`;
             const jpgPath = join(dir, jpgName);
             if (existsSync(filePath) && filePath !== jpgPath) unlinkSync(filePath);
@@ -1248,7 +1250,6 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
             buf = readFileSync(jpgPath); // record.size below reflects the normalized file
           } else {
             if (existsSync(fitTmp)) unlinkSync(fitTmp);
-            console.warn(`[media] could not normalize ${id} under 10MB (got ${res.bytes} bytes)`);
           }
         } catch (err: any) {
           if (existsSync(fitTmp)) unlinkSync(fitTmp);

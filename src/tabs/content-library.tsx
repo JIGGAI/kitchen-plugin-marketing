@@ -220,6 +220,7 @@
     const [mediaLibrary, setMediaLibrary] = useState<any[]>([]);
     const [showMediaPicker, setShowMediaPicker] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [uploadCropPreset, setUploadCropPreset] = useState('square');
     const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -322,7 +323,7 @@
           const res = await fetch(`${apiBase}/media?team=${encodeURIComponent(teamId)}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type }),
+            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type, cropPreset: uploadCropPreset }),
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -340,7 +341,7 @@
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
-    }, [apiBase, teamId, loadMedia]);
+    }, [apiBase, teamId, loadMedia, uploadCropPreset]);
 
     const deleteMedia = useCallback(async (id: string) => {
       try {
@@ -881,6 +882,19 @@
                     style: { ...t.btnGhost, padding: '0.35rem 0.7rem', fontSize: '0.8rem', whiteSpace: 'nowrap' as const },
                     disabled: uploading,
                   }, uploading ? '⏳ Uploading…' : '📁 Upload'),
+                  h('select', {
+                    value: uploadCropPreset,
+                    onChange: (e: any) => setUploadCropPreset(e.target.value),
+                    title: 'Upload crop',
+                    style: { ...t.input, width: '130px', padding: '0.35rem 0.5rem', fontSize: '0.8rem' },
+                    disabled: uploading,
+                  },
+                    h('option', { value: 'square' }, 'Square 1:1'),
+                    h('option', { value: 'portrait' }, 'Portrait 4:5'),
+                    h('option', { value: 'landscape' }, 'Wide 1.91:1'),
+                    h('option', { value: 'story' }, 'Story 9:16'),
+                    h('option', { value: 'original' }, 'Original'),
+                  ),
                   h('button', {
                     type: 'button',
                     onClick: () => { loadMedia(); setShowMediaPicker(!showMediaPicker); },
