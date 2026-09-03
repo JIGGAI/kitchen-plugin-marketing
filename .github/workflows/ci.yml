@@ -23,7 +23,15 @@ jobs:
       # https with a token that can read it.
       - name: Authorize npm to fetch the private shim
         run: |
-          git config --global url."https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/".insteadOf "ssh://git@github.com/"
+          # Diagnostic only: prints whether the secret is populated and whether
+          # it can see the repo. Never prints the token itself.
+          echo "RELEASE_PAT length: ${#PAT}"
+          curl -s -o /dev/null -w "repo access via RELEASE_PAT: HTTP %{http_code}\n" \
+            -H "Authorization: Bearer $PAT" \
+            https://api.github.com/repos/JIGGAI/kitchen-sqlite-compat
+          git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "ssh://git@github.com/"
+        env:
+          PAT: ${{ secrets.RELEASE_PAT }}
 
       - run: npm ci
 
