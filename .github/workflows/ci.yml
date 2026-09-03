@@ -11,6 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # checkout otherwise writes an http.<github>.extraheader auth line
+          # into .git/config using GITHUB_TOKEN, which is scoped to THIS repo.
+          # That header overrides the credentials in the dependency URL, so npm
+          # fetches the private shim as the wrong identity and gets 404.
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -27,17 +33,8 @@ jobs:
           curl -s -o /dev/null -w "shim repo access: HTTP %{http_code}\n" \
             -H "Authorization: Bearer $PAT" \
             https://api.github.com/repos/JIGGAI/kitchen-sqlite-compat
-          # /repos/{o}/{r} needs only Metadata, which fine-grained PATs always
-          # have -- so a 200 there does NOT prove git access. Contents:Read is
-          # what git clone actually requires.
-          curl -s -o /dev/null -w "contents perm:    HTTP %{http_code}\n" \
-            -H "Authorization: Bearer $PAT" \
-            https://api.github.com/repos/JIGGAI/kitchen-sqlite-compat/contents/package.json
-          echo "--- git error, verbatim ---"
-          git ls-remote "https://x-access-token:${PAT}@github.com/JIGGAI/kitchen-sqlite-compat.git" 2>&1 | sed "s/${PAT}/***/g" | head -5 || true
-          echo "--- token type + org SSO state ---"
-          curl -s -D- -o /dev/null -H "Authorization: Bearer $PAT" https://api.github.com/user \
-            | grep -iE "x-oauth-scopes|x-github-sso|x-accepted" | head -4 || true
+          echo -n "leftover extraheader in .git/config: "
+          git config --get-all http.https://github.com/.extraheader >/dev/null 2>&1 && echo PRESENT || echo none
           git config --global url."https://x-access-token:${PAT}@github.com/".insteadOf "ssh://git@github.com/"
         env:
           PAT: ${{ secrets.RELEASE_PAT }}
