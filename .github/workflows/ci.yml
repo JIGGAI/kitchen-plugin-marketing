@@ -17,6 +17,14 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      # The better-sqlite3 dependency is aliased to JIGGAI/kitchen-sqlite-compat,
+      # a private repo. npm normalizes git deps to ssh:// in the lockfile, and
+      # Actions' GITHUB_TOKEN is scoped to this repo only, so rewrite ssh to
+      # https with a token that can read it.
+      - name: Authorize npm to fetch the private shim
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/".insteadOf "ssh://git@github.com/"
+
       - run: npm ci
 
       - name: Build
