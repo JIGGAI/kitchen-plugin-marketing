@@ -60,7 +60,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "better-sqlite3": "github:JIGGAI/kitchen-sqlite-compat#v11.0.3",
+    "better-sqlite3": "^11.0.0",
     "drizzle-orm": "^0.38.0"
   },
   "devDependencies": {
