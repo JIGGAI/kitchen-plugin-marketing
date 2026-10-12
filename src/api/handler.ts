@@ -988,6 +988,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
           // (draft/scheduled) posts still cascade so corrections propagate.
           const cascadeDecision = shouldCascadeToPostiz({
             currentStatus: post.status,
+            nextStatus: body.status !== undefined ? body.status : post.status,
             hasExistingPublishes: existingPublishes.length > 0,
             accountTagsChanged,
             platformsChanged,
