@@ -50,6 +50,18 @@ describe('shouldCascadeToPostiz', () => {
     ).toBe(true);
   });
 
+  it('cascades a draft approved to scheduled using default accounts', () => {
+    const d = shouldCascadeToPostiz({
+      currentStatus: 'draft',
+      nextStatus: 'scheduled',
+      hasExistingPublishes: false,
+      accountTagsChanged: false,
+      platformsChanged: false,
+    });
+    expect(d.cascade).toBe(true);
+    expect(d.reason).toBe('draft-approved');
+  });
+
   it('cascades a scheduled post whose account tags changed', () => {
     expect(
       shouldCascadeToPostiz({
