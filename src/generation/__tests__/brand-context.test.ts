@@ -573,3 +573,66 @@ describe('sole-variant books', () => {
     process.env.MARKETING_BRAND_SECTIONS = 'off';
   });
 });
+
+// ---------------------------------------------------------------------------
+// "Include all brand documents" — the second checkbox in Create image.
+//
+// The style suffix above reads only BRAND.md + brand-voice.md, and only a few
+// sections of them. The other three documents the brand editor exposes never
+// reached a prompt. With includeAllBrandDocs the full text of those three is
+// appended after the prompt (and after the style suffix when both are on).
+// Images only: video providers cap prompts far below a single document.
+// ---------------------------------------------------------------------------
+describe('include all brand documents', () => {
+  function workspaceWithDocs() {
+    const dir = workspace(HMX_BRAND, HMX_VOICE);
+    writeFileSync(join(dir, 'shared-context', 'brand-system-map.md'), '# System map\n\nMAP-TEXT\n', 'utf8');
+    writeFileSync(join(dir, 'shared-context', 'content-ops-defaults.md'), '# Content ops\n\nOPS-TEXT\n', 'utf8');
+    mkdirSync(join(dir, 'shared-context', 'templates'), { recursive: true });
+    writeFileSync(join(dir, 'shared-context', 'templates', 'monthly-content-calendar-template.md'), '# Template\n\nTEMPLATE-TEXT\n', 'utf8');
+    return dir;
+  }
+
+  it('appends the three other documents in full, after the prompt and the style suffix', async () => {
+    workspaceWithDocs();
+    const out = await applyBrandContext('a barber at work', true, undefined, undefined, 'fromScratch', 'image', true);
+    expect(out.startsWith('a barber at work\n\nBrand style (Hair Mechanix):')).toBe(true);
+    const docsAt = out.indexOf('Brand documents (full reference):');
+    expect(docsAt).toBeGreaterThan(out.indexOf('Brand style'));
+    for (const marker of ['brand-system-map.md', 'MAP-TEXT', 'content-ops-defaults.md', 'OPS-TEXT', 'monthly-content-calendar-template.md', 'TEMPLATE-TEXT']) {
+      expect(out.indexOf(marker)).toBeGreaterThan(docsAt);
+    }
+  });
+
+  it('works without the style checkbox', async () => {
+    workspaceWithDocs();
+    const out = await applyBrandContext('a barber at work', false, undefined, undefined, 'fromScratch', 'image', true);
+    expect(out).not.toContain('Brand style (');
+    expect(out).toContain('MAP-TEXT');
+  });
+
+  it('skips documents that are missing instead of failing', async () => {
+    const dir = workspace(HMX_BRAND, HMX_VOICE);
+    writeFileSync(join(dir, 'shared-context', 'content-ops-defaults.md'), 'OPS-ONLY\n', 'utf8');
+    const out = await applyBrandContext('p', false, undefined, undefined, 'fromScratch', 'image', true);
+    expect(out).toContain('OPS-ONLY');
+    expect(out).not.toContain('brand-system-map.md');
+  });
+
+  it('leaves the prompt alone when none of the three exist', async () => {
+    workspace(HMX_BRAND, HMX_VOICE);
+    expect(await applyBrandContext('p', false, undefined, undefined, 'fromScratch', 'image', true)).toBe('p');
+  });
+
+  it('never attaches them to a video prompt', async () => {
+    workspaceWithDocs();
+    const out = await applyBrandContext('p', false, undefined, undefined, 'fromScratch', 'video', true);
+    expect(out).toBe('p');
+  });
+
+  it('is off unless asked for', async () => {
+    workspaceWithDocs();
+    const out = await applyBrandContext('p', true, undefined, undefined, 'fromScratch', 'image');
+    expect(out).not.toContain('MAP-TEXT');
+  });
+});

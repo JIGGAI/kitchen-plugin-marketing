@@ -1831,6 +1831,7 @@ export async function handleRequest(req: PluginRequest, ctx: KitchenPluginContex
         config: body.config,
         filename: body.filename,
         includeBrand: Boolean((body as any).includeBrand),
+        includeAllBrandDocs: Boolean((body as any).includeAllBrandDocs),
       }, userId);
       return { status: 202, data: { job } };
     } catch (error: any) {
