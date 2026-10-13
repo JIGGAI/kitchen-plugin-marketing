@@ -296,7 +296,7 @@ async function runPromptGeneration(
     // media modal — the brand context only augments what the driver sees.
     // 'fromScratch': there is no source photo, so the brand book's setting
     // description is the only thing telling the model what our shop is.
-    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant, 'fromScratch', request.type);
+    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant, 'fromScratch', request.type, request.includeAllBrandDocs);
     const result = request.type === 'video'
       ? await generateVideoFromPrompt(effectivePrompt, outputDir, videoConfig)
       : await generateImageFromPrompt(effectivePrompt, outputDir, request.config);
@@ -430,7 +430,7 @@ async function runGeneration(
     // is preserved on the DB record. 'fromSource' drops the brand book's
     // setting description — this path edits a real shop photo, which already
     // supplies the room, and restating it fights the source image.
-    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant, 'fromSource', request.type);
+    const effectivePrompt = await applyBrandContext(request.prompt, request.includeBrand, teamId, request.brandVariant, 'fromSource', request.type, request.includeAllBrandDocs);
     const result = request.type === 'image'
       ? await generateImage(sourcePath, effectivePrompt, outputDir, request.config)
       : await generateVideo(sourcePath, effectivePrompt, outputDir, videoConfig);
