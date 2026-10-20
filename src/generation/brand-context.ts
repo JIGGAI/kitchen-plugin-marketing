@@ -467,11 +467,45 @@ export async function applyBrandContext(
   variant?: string,
   scene: BrandScene = 'fromScratch',
   type?: 'image' | 'video',
+  includeAllBrandDocs?: boolean,
 ): Promise<string> {
-  if (!includeBrand) return prompt;
-  const suffix = await buildBrandStyleSuffixAsync(teamId, variant, scene, type);
-  if (!suffix) return prompt;
-  return `${prompt}\n\n${suffix}`;
+  const parts = [prompt];
+  if (includeBrand) {
+    const suffix = await buildBrandStyleSuffixAsync(teamId, variant, scene, type);
+    if (suffix) parts.push(suffix);
+  }
+  if (includeAllBrandDocs) {
+    const docs = buildAllBrandDocsBlock(teamId, type);
+    if (docs) parts.push(docs);
+  }
+  return parts.join('\n\n');
+}
+
+// The brand editor exposes five documents; the style suffix reads two of
+// them, and only a few sections of those. "Include all brand documents"
+// appends the other three verbatim. They are reference material rather than
+// a curated style line, so they go last and are introduced as such.
+//
+// Images only. The video providers cap a prompt well below the size of one
+// of these files (the style suffix alone is held to 1400 chars for video),
+// so attaching them would either be rejected or truncated to noise.
+const EXTRA_BRAND_DOCS = [
+  ['shared-context', 'brand-system-map.md'],
+  ['shared-context', 'content-ops-defaults.md'],
+  ['shared-context', 'templates', 'monthly-content-calendar-template.md'],
+];
+
+export function buildAllBrandDocsBlock(teamId?: string, type?: 'image' | 'video'): string {
+  if (type === 'video') return '';
+  const workspace = workspaceFor(teamId);
+  const sections: string[] = [];
+  for (const rel of EXTRA_BRAND_DOCS) {
+    const text = readSafely(join(workspace, ...rel)).trim();
+    if (!text) continue;
+    sections.push(`--- ${rel[rel.length - 1]} ---\n${text}`);
+  }
+  if (!sections.length) return '';
+  return ['Brand documents (full reference):', ...sections].join('\n\n');
 }
 
 export function getBrandFilePath(teamId?: string): string {

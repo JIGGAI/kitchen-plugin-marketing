@@ -3,6 +3,12 @@ export interface GenerationRequest {
   type: 'image' | 'video';
   provider?: string;
   includeBrand?: boolean;
+  /**
+   * Also append the full text of the brand documents the style suffix does
+   * not read (brand-system-map.md, content-ops-defaults.md, the monthly
+   * calendar template). Images only — see brand-context.ts.
+   */
+  includeAllBrandDocs?: boolean;
   /** Venue/sub-brand whose imagery rules apply, e.g. 'Oakwood'. */
   brandVariant?: string;
   config?: {
