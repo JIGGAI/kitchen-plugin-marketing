@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { buildBrandStyleSuffix, applyBrandContext, brandLabelFrom, buildBrandStyleSuffixAsync, listBrandVariants, composeBrandLabel } from '../brand-context';
+import { buildBrandStyleSuffix, applyBrandContext, brandLabelFrom, buildBrandStyleSuffixAsync, listBrandVariants, composeBrandLabel, buildApprovedPostExamplesExcerpt } from '../brand-context';
 
 // Each case builds a throwaway workspace and points the resolver at it via
 // MARKETING_BRAND_WORKSPACE, so nothing here depends on what's installed on
@@ -577,8 +577,8 @@ describe('sole-variant books', () => {
 // ---------------------------------------------------------------------------
 // "Include all brand documents" — the second checkbox in Create image.
 //
-// The style suffix above reads only BRAND.md + brand-voice.md, and only a few
-// sections of them. The other three documents the brand editor exposes never
+// The default brand context reads BRAND.md + brand-voice.md plus a compact
+// approved-examples excerpt. The other three documents the brand editor exposes never
 // reached a prompt. With includeAllBrandDocs the full text of those three is
 // appended after the prompt (and after the style suffix when both are on).
 // Images only: video providers cap prompts far below a single document.
@@ -634,5 +634,28 @@ describe('include all brand documents', () => {
     workspaceWithDocs();
     const out = await applyBrandContext('p', true, undefined, undefined, 'fromScratch', 'image');
     expect(out).not.toContain('MAP-TEXT');
+  });
+});
+
+describe('approved post examples', () => {
+  it('adds a compact copy reference whenever brand context is requested', async () => {
+    const dir = workspace(HMX_BRAND, HMX_VOICE);
+    writeFileSync(join(dir, 'shared-context', 'approved-post-examples.md'), `# Approved examples\n\n## Example 1\n\n> Good Day.. come get cleaned up.\n>\n> Book online or stop in.\n\nEditorial note that must not enter the prompt.\n`, 'utf8');
+
+    const out = await applyBrandContext('a barber at work', true, undefined, undefined, 'fromScratch', 'image');
+    expect(out).toContain('Approved post examples (tone and structure only');
+    expect(out).toContain('Good Day.. come get cleaned up.');
+    expect(out).toContain('Book online or stop in.');
+    expect(out).not.toContain('Editorial note');
+  });
+
+  it('caps the excerpt for video prompts and omits it when the file is missing', () => {
+    const dir = workspace(HMX_BRAND, HMX_VOICE);
+    writeFileSync(join(dir, 'shared-context', 'approved-post-examples.md'), `> ${'tone '.repeat(400)}\n`, 'utf8');
+    expect(buildApprovedPostExamplesExcerpt(undefined, 'video').length).toBeLessThan(900);
+
+    const empty = workspace(HMX_BRAND, HMX_VOICE);
+    process.env.MARKETING_BRAND_WORKSPACE = empty;
+    expect(buildApprovedPostExamplesExcerpt()).toBe('');
   });
 });
