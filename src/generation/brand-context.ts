@@ -31,6 +31,9 @@ function brandPathFor(teamId?: string): string {
 function brandVoicePathFor(teamId?: string): string {
   return join(workspaceFor(teamId), 'shared-context', 'brand-voice.md');
 }
+function approvedPostExamplesPathFor(teamId?: string): string {
+  return join(workspaceFor(teamId), 'shared-context', 'approved-post-examples.md');
+}
 
 // Brand books aren't laid out identically across deployments, so each field
 // lists candidate section paths (outer section, optional nested subsection).
@@ -473,6 +476,8 @@ export async function applyBrandContext(
   if (includeBrand) {
     const suffix = await buildBrandStyleSuffixAsync(teamId, variant, scene, type);
     if (suffix) parts.push(suffix);
+    const examples = buildApprovedPostExamplesExcerpt(teamId, type);
+    if (examples) parts.push(examples);
   }
   if (includeAllBrandDocs) {
     const docs = buildAllBrandDocsBlock(teamId, type);
@@ -481,8 +486,29 @@ export async function applyBrandContext(
   return parts.join('\n\n');
 }
 
-// The brand editor exposes five documents; the style suffix reads two of
-// them, and only a few sections of those. "Include all brand documents"
+/**
+ * Add a compact few-shot copy reference without sending the entire examples
+ * library to image/video providers. Blockquotes are the approved/example copy;
+ * headings and editorial notes stay in the source document for human editors.
+ */
+export function buildApprovedPostExamplesExcerpt(teamId?: string, type?: 'image' | 'video'): string {
+  const source = readSafely(approvedPostExamplesPathFor(teamId));
+  const quoted = source.split('\n')
+    .filter((line) => /^>\s?/.test(line))
+    .map((line) => line.replace(/^>\s?/, '').trimEnd())
+    .join('\n')
+    .trim();
+  if (!quoted) return '';
+
+  const maxChars = type === 'video' ? 700 : 1200;
+  const body = quoted.length > maxChars
+    ? `${quoted.slice(0, maxChars).replace(/\s+\S*$/, '').trimEnd()}…`
+    : quoted;
+  return `Approved post examples (tone and structure only; never reuse dates, offers, prices, locations, or claims without current source data):\n${body}`;
+}
+
+// The brand editor exposes six documents; the default brand context reads
+// BRAND.md, brand-voice.md, and a compact approved-examples excerpt. "Include all brand documents"
 // appends the other three verbatim. They are reference material rather than
 // a curated style line, so they go last and are introduced as such.
 //
